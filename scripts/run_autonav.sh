@@ -28,12 +28,18 @@ fi
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-1}"
 
+# ROS setup.bash reads optional AMENT_* / COLCON_* variables. With `set -u`
+# an unset AMENT_TRACE_SETUP_FILES aborts before the sim starts.
+source_ros() {
+  set +u
+  # shellcheck disable=SC1090,SC1091
+  source "$1"
+  set -u
+}
 if [[ -f "/opt/ros/jazzy/setup.bash" ]]; then
-  # shellcheck disable=SC1091
-  source /opt/ros/jazzy/setup.bash
+  source_ros /opt/ros/jazzy/setup.bash
 fi
-# shellcheck disable=SC1091
-source "$REPO_ROOT/install/setup.bash"
+source_ros "$REPO_ROOT/install/setup.bash"
 
 LOG_DIR="${S10_RESULTS_DIR:-$REPO_ROOT/results}"
 mkdir -p "$LOG_DIR"
@@ -52,18 +58,41 @@ echo "[run_autonav] starting rl_deploy (AutoNav) ..."
 ros2 run s10_sdk_deploy rl_deploy > "$LOG_DIR/rl_deploy.log" 2>&1 &
 DEPLOY_PID=$!
 
-cleanup() {
-  echo "[run_autonav] shutting down ..."
-  kill "$DEPLOY_PID" 2>/dev/null || true
-  kill "$SIM_PID" 2>/dev/null || true
-  wait 2>/dev/null || true
+TAIL_PID=""
+CLEANED=0
+stop_pid() {
+  local pid="${1:-}"
+  [[ -n "$pid" ]] || return 0
+  kill "$pid" 2>/dev/null || true
 }
-trap cleanup INT TERM
+cleanup() {
+  # Re-entrant Ctrl+C used to reprint this and hang on `tail -f` (SIGINT ignored).
+  if [[ "$CLEANED" -eq 1 ]]; then
+    return 0
+  fi
+  CLEANED=1
+  trap - INT TERM EXIT
+  echo "[run_autonav] shutting down ..."
+  stop_pid "${TAIL_PID:-}"
+  stop_pid "${DEPLOY_PID:-}"
+  stop_pid "${SIM_PID:-}"
+  sleep 0.2
+  stop_pid "${TAIL_PID:-}"
+  stop_pid "${DEPLOY_PID:-}"
+  stop_pid "${SIM_PID:-}"
+  kill -9 "${TAIL_PID:-}" "${DEPLOY_PID:-}" "${SIM_PID:-}" 2>/dev/null || true
+  wait "${DEPLOY_PID:-}" 2>/dev/null || true
+  wait "${SIM_PID:-}" 2>/dev/null || true
+  wait "${TAIL_PID:-}" 2>/dev/null || true
+}
+trap cleanup INT TERM EXIT
 
 echo "[run_autonav] running. logs: $LOG_DIR/sim.log, $LOG_DIR/rl_deploy.log"
+# Background tail ignores SIGINT; cleanup must kill it explicitly.
 tail -f "$LOG_DIR/rl_deploy.log" &
 TAIL_PID=$!
 
+set +e
 wait "$DEPLOY_PID"
-kill "$TAIL_PID" 2>/dev/null || true
+set -e
 cleanup

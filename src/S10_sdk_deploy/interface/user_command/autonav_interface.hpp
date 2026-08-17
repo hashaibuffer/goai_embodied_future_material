@@ -1,10 +1,17 @@
 /**
  * @file autonav_interface.hpp
- * @brief Autonomous waypoint navigation replacing the keyboard interface.
+ * @brief Autonomous waypoint navigation: official KeyboardInterface automaton.
+ *
+ * Same UserCommand protocol as `keyboard_interface.hpp`:
+ *   - `z`  only in WaitingForStand / LieDown  -> StandingUp
+ *   - `c`  as soon as StandingUp              -> RLControlMode
+ *   - wasd/qe velocities only in RLControlMode
+ * StandUpState owns the 2 * stand_duration_ wait before honoring `c`.
+ * Velocity limits match the official keyboard ranges.
  *
  * Subscribes `/S10_BASE_POSE` (geometry_msgs/msg/PoseStamped), parses
- * `track_overlay.xml` waypoints, performs state-gated stand-up + RL control
- * entry, and writes the official UserCommand velocity scales. Two modes:
+ * `track_overlay.xml` waypoints, and writes UserCommand velocity scales.
+ * Two modes:
  *   - eval:    never teleports, official timer is valid.
  *   - collect: on stall/tumble/out-of-bounds writes failure metadata and
  *              teleports to the current checkpoint to continue coverage.
@@ -23,7 +30,6 @@
 #include "custom_types.h"
 
 #include <rclcpp/rclcpp.hpp>
-#include <rclcpp/executors/single_threaded_executor.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 
 #include <algorithm>
@@ -37,7 +43,6 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
-#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -61,10 +66,9 @@ public:
 private:
     static constexpr double kPi = 3.14159265358979323846;
     static constexpr double kStandHeight = 0.2;      // base_link nominal standing z
-    static constexpr double kControlDtMs = 5.0;      // same cadence as keyboard
-    static constexpr double kMinStandWaitS = 4.0;    // 2 * stand_duration_ + buffer
+    static constexpr double kControlDtMs = 5.0;      // same cadence as KeyboardInterface
 
-    // Command limits (frozen by T00).
+    // Official KeyboardInterface ranges (frozen by T00).
     static constexpr float kMaxForward = 1.0f;
     static constexpr float kMaxSide = 0.6f;
     static constexpr float kMaxYaw = 1.0f;
@@ -98,15 +102,12 @@ private:
     };
 
     std::atomic<bool> running_{false};
-    std::thread spin_thread_;
     std::thread nav_thread_;
 
     rclcpp::Node::SharedPtr node_;
     rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr pose_sub_;
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr teleport_pub_;
 
-    // Latest pose (thread-safe, updated by subscription callback).
-    mutable std::mutex pose_mutex_;
     bool has_pose_ = false;
     double pose_x_ = 0.0, pose_y_ = 0.0, pose_z_ = 0.0;
     double pose_qx_ = 0.0, pose_qy_ = 0.0, pose_qz_ = 0.0, pose_qw_ = 1.0;
@@ -120,11 +121,9 @@ private:
     bool reached_any_ = false;
     int max_idx_ = 0;  // highest waypoint index reached (for baseline)
 
-    // Stand-up state gating.
-    bool stand_requested_ = false;
-    bool rl_requested_ = false;
-    bool standing_since_set_ = false;
-    std::chrono::steady_clock::time_point standing_since_;
+    // Official keyboard mode keys, one-shot like process_mode_command.
+    bool stand_requested_ = false;  // emitted `z`
+    bool rl_requested_ = false;     // emitted `c`
 
     // Stall history + logging throttling.
     std::deque<PoseSample> stall_history_;
@@ -246,7 +245,6 @@ private:
 
     void pose_callback(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
     {
-        std::lock_guard<std::mutex> lock(pose_mutex_);
         pose_x_ = msg->pose.position.x;
         pose_y_ = msg->pose.position.y;
         pose_z_ = msg->pose.position.z;
@@ -257,17 +255,6 @@ private:
         pose_stamp_s_ = static_cast<double>(msg->header.stamp.sec) +
                         static_cast<double>(msg->header.stamp.nanosec) * 1e-9;
         has_pose_ = true;
-    }
-
-    void snapshot_pose(double& x, double& y, double& z,
-                       double& qx, double& qy, double& qz, double& qw,
-                       double& t_s, bool& ok)
-    {
-        std::lock_guard<std::mutex> lock(pose_mutex_);
-        ok = has_pose_;
-        x = pose_x_; y = pose_y_; z = pose_z_;
-        qx = pose_qx_; qy = pose_qy_; qz = pose_qz_; qw = pose_qw_;
-        t_s = pose_stamp_s_;
     }
 
     static double xy_dist(double ax, double ay, double bx, double by)
@@ -331,13 +318,22 @@ private:
                 kind = "turn";
         }
 
+        // Lookahead only on straight segments, and only if the blend does not
+        // force a reorient past the pure-yaw threshold. Same as navigation.py.
         bool no_cross = (next_idx_ == 0 || next_idx_ == static_cast<int>(waypoints_.size()) - 1);
-        if (!no_cross && next_idx_ + 1 < static_cast<int>(waypoints_.size())) {
+        if (kind == "straight" && !no_cross &&
+            next_idx_ + 1 < static_cast<int>(waypoints_.size())) {
             double sw = lookahead_switch(kind);
             if (xy_dist(x, y, tx, ty) < sw) {
                 const Waypoint& nxt = waypoints_[next_idx_ + 1];
-                tx = (1.0 - kLookaheadWeight) * tx + kLookaheadWeight * nxt.x;
-                ty = (1.0 - kLookaheadWeight) * ty + kLookaheadWeight * nxt.y;
+                double bx = (1.0 - kLookaheadWeight) * tx + kLookaheadWeight * nxt.x;
+                double by = (1.0 - kLookaheadWeight) * ty + kLookaheadWeight * nxt.y;
+                double wp_err = std::fabs(wrap_angle(std::atan2(ty - y, tx - x) - yaw));
+                double blend_err = std::fabs(wrap_angle(std::atan2(by - y, bx - x) - yaw));
+                if (blend_err <= kYawThresholdRad || blend_err <= wp_err) {
+                    tx = bx;
+                    ty = by;
+                }
             }
         }
 
@@ -452,6 +448,22 @@ private:
         std::cout << "[AutoNav] teleport request -> (" << tx << ", " << ty << ")" << std::endl;
     }
 
+    // Same gates as KeyboardInterface::process_mode_command.
+    void process_mode_command(uint8_t state)
+    {
+        if (!stand_requested_ && (state == RobotMotionState::WaitingForStand ||
+                                  state == RobotMotionState::LieDown)) {
+            usr_cmd_->target_mode = uint8_t(RobotMotionState::StandingUp);
+            stand_requested_ = true;
+            std::cout << "[AutoNav] z -> StandingUp" << std::endl;
+        } else if (!rl_requested_ && state == RobotMotionState::StandingUp) {
+            usr_cmd_->target_mode = uint8_t(RobotMotionState::RLControlMode);
+            rl_requested_ = true;
+            std::cout << "[AutoNav] c -> RLControlMode (StandUpState waits 2*stand_duration_)"
+                      << std::endl;
+        }
+    }
+
     void nav_loop()
     {
         last_no_pose_log_ = std::chrono::steady_clock::now();
@@ -459,36 +471,22 @@ private:
 
         while (running_) {
             auto now = std::chrono::steady_clock::now();
-
-            // ---- State-gated stand up -> RL control (no sleep-only gating). ----
-            uint8_t state = msfb_->GetCurrentState();
-            if (!rl_requested_) {
-                if (!stand_requested_ && (state == RobotMotionState::WaitingForStand ||
-                                          state == RobotMotionState::LieDown)) {
-                    usr_cmd_->target_mode = uint8_t(RobotMotionState::StandingUp);
-                    stand_requested_ = true;
-                    std::cout << "[AutoNav] requesting StandingUp" << std::endl;
-                } else if (state == RobotMotionState::StandingUp) {
-                    if (!standing_since_set_) {
-                        standing_since_ = now;
-                        standing_since_set_ = true;
-                    }
-                    double elapsed =
-                        std::chrono::duration<double>(now - standing_since_).count();
-                    if (elapsed >= kMinStandWaitS) {
-                        usr_cmd_->target_mode = uint8_t(RobotMotionState::RLControlMode);
-                        rl_requested_ = true;
-                        std::cout << "[AutoNav] requesting RLControlMode" << std::endl;
-                    }
-                } else {
-                    standing_since_set_ = false;
-                }
+            if (node_) {
+                rclcpp::spin_some(node_);
             }
 
-            // ---- Pose / navigation (only drive when in RL control). ----
-            double x, y, z, qx, qy, qz, qw, t_s;
-            bool ok;
-            snapshot_pose(x, y, z, qx, qy, qz, qw, t_s, ok);
+            // KeyboardInterface writes time_stamp every 5 ms; SafeController
+            // treats a frozen stamp as a lost gamepad and trips damping.
+            usr_cmd_->time_stamp = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+
+            uint8_t state = msfb_->GetCurrentState();
+            process_mode_command(state);
+
+            bool ok = has_pose_;
+            double x = pose_x_, y = pose_y_;
+            double qx = pose_qx_, qy = pose_qy_, qz = pose_qz_, qw = pose_qw_;
+            double t_s = pose_stamp_s_;
 
             if (state == RobotMotionState::RLControlMode) {
                 if (!ok) {
@@ -505,13 +503,12 @@ private:
 
                     advance_waypoint(x, y);
 
-                    float fwd, side, wz;
+                    float fwd = 0.0f, side = 0.0f, wz = 0.0f;
                     compute_command(x, y, yaw, fwd, side, wz);
                     usr_cmd_->forward_vel_scale = fwd;
                     usr_cmd_->side_vel_scale = side;
                     usr_cmd_->turnning_vel_scale = wz;
 
-                    // ---- Failure detection (collect mode reacts). ----
                     stall_history_.push_back({t_s, x, y});
 
                     bool pure_yaw = (fwd == 0.0f && wz != 0.0f);
@@ -536,6 +533,15 @@ private:
                                 usr_cmd_->forward_vel_scale = 0.0f;
                                 usr_cmd_->side_vel_scale = 0.0f;
                                 usr_cmd_->turnning_vel_scale = 0.0f;
+                            } else if (!reached_any_) {
+                                // Failed before WP0: reset to the official start, not onto WP0.
+                                append_failure(reason, x, y, yaw, true, 0.0, -2.5,
+                                               t_s, fwd, side, wz);
+                                request_teleport(0.0, -2.5, 0.0, 0.0);
+                                stall_history_.clear();
+                                teleport_cooldown_until_ =
+                                    std::chrono::steady_clock::now() +
+                                    std::chrono::seconds(static_cast<int>(kStallWindowS));
                             } else {
                                 const Waypoint& dest = waypoints_[next_idx_];
                                 append_failure(reason, x, y, yaw, true, dest.x, dest.y,
@@ -566,7 +572,7 @@ private:
                     }
                 }
             } else {
-                // Not yet in RL control: keep zero velocity.
+                // Official keyboard: velocities only exist in RLControlMode.
                 usr_cmd_->forward_vel_scale = 0.0f;
                 usr_cmd_->side_vel_scale = 0.0f;
                 usr_cmd_->turnning_vel_scale = 0.0f;
@@ -607,19 +613,14 @@ public:
         std::cout << "[AutoNav] parsed " << waypoints_.size() << " waypoints" << std::endl;
 
         node_ = std::make_shared<rclcpp::Node>("autonav");
+        rclcpp::QoS pose_qos(50);
         pose_sub_ = node_->create_subscription<geometry_msgs::msg::PoseStamped>(
-            "/S10_BASE_POSE", 10,
+            "/S10_BASE_POSE", pose_qos,
             [this](const geometry_msgs::msg::PoseStamped::SharedPtr msg) { pose_callback(msg); });
         teleport_pub_ = node_->create_publisher<geometry_msgs::msg::PoseStamped>(
             "/S10_TELEPORT", 10);
 
         running_ = true;
-
-        spin_thread_ = std::thread([this]() {
-            rclcpp::executors::SingleThreadedExecutor exec;
-            exec.add_node(node_);
-            exec.spin();
-        });
         nav_thread_ = std::thread(&AutoNavCommandInterface::nav_loop, this);
 
         std::cout << "[AutoNav] started" << std::endl;
@@ -628,10 +629,6 @@ public:
     void Stop() override
     {
         running_ = false;
-        if (node_) {
-            rclcpp::shutdown();
-        }
-        if (spin_thread_.joinable()) spin_thread_.join();
         if (nav_thread_.joinable()) nav_thread_.join();
 
         usr_cmd_->forward_vel_scale = 0.0f;
