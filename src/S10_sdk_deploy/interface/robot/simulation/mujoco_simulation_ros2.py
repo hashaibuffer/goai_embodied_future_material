@@ -24,6 +24,8 @@ import rclpy
 from rclpy.node import Node
 from builtin_interfaces.msg import Time
 from drdds.msg import ImuData, JointsData, JointsDataCmd, MetaType, ImuDataValue, JointsDataValue, JointData, JointDataCmd
+from pose_publisher import PosePublisher
+from teleport import TeleportHandler
 
 
 
@@ -37,7 +39,9 @@ SCENE_XML_PATHS = {
 }
 DEFAULT_SCENE_NAME = os.environ.get("S10_MUJOCO_SCENE", "track")
 XML_PATH = str(SCENE_XML_PATHS.get(DEFAULT_SCENE_NAME, SCENE_XML_PATHS["track"]).resolve())
-USE_VIEWER = True
+USE_VIEWER = os.environ.get("S10_MUJOCO_VIEWER", "1").strip().lower() not in (
+    "0", "false", "no", "off",
+)
 TRACK_VIEWER = False
 DT = 0.001
 RENDER_INTERVAL = 10
@@ -82,7 +86,15 @@ def parse_cli_args():
         help="Custom MJCF path. Overrides --scene and S10_MUJOCO_SCENE.",
     )
     parser.add_argument("--model-key", default=MODEL_NAME, help="Robot key used for initial joint pose.")
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Disable the MuJoCo viewer (same as S10_MUJOCO_VIEWER=0).",
+    )
     args, ros_args = parser.parse_known_args()
+    if args.headless:
+        global USE_VIEWER
+        USE_VIEWER = False
     return args, ros_args
 
 
@@ -98,6 +110,8 @@ class MuJoCoSimulationNode(Node):
                  xml_path: str = XML_PATH):
 
         super().__init__('mujoco_simulation')
+
+        self.model_key = model_key
 
         # 加载 MJCF
         if not os.path.isfile(xml_path):
@@ -134,6 +148,22 @@ class MuJoCoSimulationNode(Node):
         # ROS Publishers
         self.imu_pub = self.create_publisher(ImuData, '/IMU_DATA', 200)
         self.joints_pub = self.create_publisher(JointsData, '/JOINTS_DATA', 200)
+        self.pose_pub = PosePublisher(self)
+
+        # Teleport only in collect (or when S10_ALLOW_TELEPORT=1). Eval scoring
+        # must not move the robot if a stale /S10_TELEPORT arrives.
+        allow_env = os.environ.get("S10_ALLOW_TELEPORT")
+        if allow_env is None:
+            allow_teleport = os.environ.get("S10_AUTONAV_MODE", "eval") == "collect"
+        else:
+            allow_teleport = allow_env.strip().lower() in ("1", "true", "yes", "on")
+        self.teleport = TeleportHandler(self, self._apply_teleport, enabled=allow_teleport)
+        self.get_logger().info(f"[INFO] Teleport handler enabled={allow_teleport}")
+
+        # base_link body id for ground-truth pose publishing (independent of track)
+        self.base_link_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, TRACK_BODY_NAME)
+        if self.base_link_body_id < 0:
+            self.get_logger().warn(f"Pose publishing disabled; cannot find body '{TRACK_BODY_NAME}'")
 
         # ROS Subscriber
         self.cmd_sub = self.create_subscription(
@@ -157,6 +187,27 @@ class MuJoCoSimulationNode(Node):
         qpos0[3:7] = np.array([1, 0, 0, 0])
         self.data.qpos[:] = qpos0
         mujoco.mj_forward(self.model, self.data)
+
+    def _apply_teleport(self, x, y, z, qw, qx, qy, qz):
+        """Move base to the requested pose and fully reset dynamics."""
+        qpos0 = self.data.qpos.copy()
+        qpos0[7:7 + self.dof_num] = JOINT_INIT[self.model_key]
+        qpos0[:3] = np.array([x, y, z], dtype=np.float64)
+        qpos0[3:7] = np.array([qw, qx, qy, qz], dtype=np.float64)
+        self.data.qpos[:] = qpos0
+        self.data.qvel[:] = 0.0
+        self.data.qacc[:] = 0.0
+        self.data.ctrl[:] = 0.0
+        self.kp_cmd[:] = 0.0
+        self.kd_cmd[:] = 0.0
+        self.pos_cmd[:] = 0.0
+        self.vel_cmd[:] = 0.0
+        self.tau_ff[:] = 0.0
+        mujoco.mj_forward(self.model, self.data)
+        self.get_logger().info(
+            f"[TELEPORT] base set to pos=({x:.3f},{y:.3f},{z:.3f}) "
+            f"quat=({qw:.3f},{qx:.3f},{qy:.3f},{qz:.3f})"
+        )
 
     def _track_geom_index(self, name: str, prefix: str):
         if not name or not name.startswith(prefix):
@@ -340,6 +391,7 @@ class MuJoCoSimulationNode(Node):
                 # 采样 & 发送观测 (every 5 steps for 200 Hz)
                 if step % 5 == 0:
                     self._publish_robot_state(step)
+                    self._publish_base_pose()
 
                 # 可视化
                 if self.viewer and step % RENDER_INTERVAL == 0:
@@ -451,6 +503,15 @@ class MuJoCoSimulationNode(Node):
             joint.motion_temp = 40.0  # Dummy normal temp
             joint.driver_temp = 45.0  # Dummy normal temp
         self.joints_pub.publish(joints_msg)
+
+    def _publish_base_pose(self):
+        if self.base_link_body_id < 0:
+            return
+        self.pose_pub.publish(
+            self.data.xpos[self.base_link_body_id],
+            self.data.xquat[self.base_link_body_id],
+            self.timestamp,
+        )
 
 
 if __name__ == "__main__":

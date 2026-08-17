@@ -18,6 +18,7 @@
 #include "quadruped_wheel/rl_control_state.hpp"
 #include "quadruped_wheel/liedown_state.hpp"
 #include "keyboard_interface.hpp"
+#include "autonav_interface.hpp"
 #include "hardware/s10_interface.hpp"
 #include "udp_server.hpp"
 
@@ -50,6 +51,10 @@ public:
             auto gp_ptr = std::make_shared<GamepadInterface>(robot_name_);
             udp_server_ = std::make_shared<UdpServer>(gp_ptr.get());
             uc_ptr_ = gp_ptr;
+        }else if(remote_cmd_type_ == RemoteCommandType::kAutoNav){
+            AutoNavCommandInterface::Mode mode = AutoNavCommandInterface::mode_from_string(
+                std::getenv("S10_AUTONAV_MODE") ? std::getenv("S10_AUTONAV_MODE") : "eval");
+            uc_ptr_ = std::make_shared<AutoNavCommandInterface>(robot_name_, mode);
         }else{
             std::cerr << "error user command interface! " << std::endl;
             exit(0);
