@@ -179,10 +179,13 @@ private:
     std::filesystem::path resolve_track_xml()
     {
         namespace fs = std::filesystem;
-        fs::path base = fs::path(__FILE__).parent_path();          // .../interface/user_command
-        fs::path candidate = fs::canonical(base / ".." / ".." / "S10_description" /
-                                           "s10_mjcf" / "mjcf" / "track_overlay.xml");
-        return candidate;
+        const char* env_path = std::getenv("S10_TRACK_OVERLAY");
+        if (env_path && env_path[0] != '\0') {
+            return fs::path(env_path);
+        }
+        fs::path base = fs::path(__FILE__).parent_path();
+        return (base / ".." / ".." / "S10_description" /
+                "s10_mjcf" / "mjcf" / "track_overlay.xml").lexically_normal();
     }
 
     bool parse_waypoints(const std::filesystem::path& xml_path)
@@ -382,6 +385,9 @@ private:
             stall_history_.pop_front();
 
         if (stall_history_.size() < 2) return false;
+        if (stall_history_.back().t - stall_history_.front().t + 1e-9 < kStallWindowS) {
+            return false;
+        }
         displacement = xy_dist(stall_history_.front().x, stall_history_.front().y,
                                stall_history_.back().x, stall_history_.back().y);
         return displacement < kStallMinDisplacementM;
@@ -404,13 +410,17 @@ private:
     }
 
     void append_failure(const std::string& reason, double x, double y, double yaw,
-                        bool teleported, double tele_x, double tele_y)
+                        bool teleported, double tele_x, double tele_y,
+                        double stamp_s, float fwd, float side, float wz)
     {
         ensure_results_dir();
         nlohmann::json rec;
         rec["wp_id"] = (next_idx_ > 0 ? next_idx_ - 1 : 0);
         rec["progress_next_idx"] = next_idx_;
         rec["pose"] = {{"x", x}, {"y", y}, {"yaw", yaw}};
+        rec["cmd"] = {{"vx", fwd}, {"vy", side}, {"wz", wz}};
+        rec["t_fail"] = stamp_s;
+        rec["mode"] = (mode_ == Mode::COLLECT ? "collect" : "eval");
         rec["reason"] = reason;
         rec["teleported"] = teleported;
         rec["teleport_target"] = {{"x", tele_x}, {"y", tele_y}};
@@ -428,14 +438,14 @@ private:
                   << " at wp~=" << (next_idx_ > 0 ? next_idx_ - 1 : 0) << std::endl;
     }
 
-    void request_teleport(double tx, double ty, double yaw)
+    void request_teleport(double tx, double ty, double tz, double yaw)
     {
         if (!teleport_pub_) return;
         geometry_msgs::msg::PoseStamped msg;
         msg.header.frame_id = "base_link";
         msg.pose.position.x = tx;
         msg.pose.position.y = ty;
-        msg.pose.position.z = waypoints_[next_idx_].z + kStandHeight;
+        msg.pose.position.z = tz + kStandHeight;
         yaw_to_quat(yaw, msg.pose.orientation.x, msg.pose.orientation.y,
                     msg.pose.orientation.z, msg.pose.orientation.w);
         teleport_pub_->publish(msg);
@@ -517,26 +527,33 @@ private:
 
                     if ((stalled || tumble || oob) && !in_cooldown) {
                         std::string reason = tumble ? "tumble" : (oob ? "out_of_bounds" : "stall");
+                        const bool finished =
+                            next_idx_ < 0 || next_idx_ >= static_cast<int>(waypoints_.size());
                         if (mode_ == Mode::COLLECT) {
-                            append_failure(reason, x, y, yaw, true,
-                                           waypoints_[next_idx_].x, waypoints_[next_idx_].y);
-                            double target_yaw = yaw;
-                            if (next_idx_ + 1 < static_cast<int>(waypoints_.size())) {
-                                const Waypoint& n = waypoints_[next_idx_ + 1];
-                                target_yaw = std::atan2(n.y - waypoints_[next_idx_].y,
-                                                        n.x - waypoints_[next_idx_].x);
+                            if (finished) {
+                                append_failure(reason, x, y, yaw, false, 0.0, 0.0,
+                                               t_s, fwd, side, wz);
+                                usr_cmd_->forward_vel_scale = 0.0f;
+                                usr_cmd_->side_vel_scale = 0.0f;
+                                usr_cmd_->turnning_vel_scale = 0.0f;
+                            } else {
+                                const Waypoint& dest = waypoints_[next_idx_];
+                                append_failure(reason, x, y, yaw, true, dest.x, dest.y,
+                                               t_s, fwd, side, wz);
+                                double target_yaw = yaw;
+                                if (next_idx_ + 1 < static_cast<int>(waypoints_.size())) {
+                                    const Waypoint& n = waypoints_[next_idx_ + 1];
+                                    target_yaw = std::atan2(n.y - dest.y, n.x - dest.x);
+                                }
+                                request_teleport(dest.x, dest.y, dest.z, target_yaw);
+                                stall_history_.clear();
+                                teleport_cooldown_until_ =
+                                    std::chrono::steady_clock::now() +
+                                    std::chrono::seconds(static_cast<int>(kStallWindowS));
                             }
-                            request_teleport(waypoints_[next_idx_].x,
-                                             waypoints_[next_idx_].y, target_yaw);
-                            stall_history_.clear();
-                            // Grace period after teleport so the reset doesn't
-                            // immediately re-trigger a stall.
-                            teleport_cooldown_until_ =
-                                std::chrono::steady_clock::now() +
-                                std::chrono::seconds(static_cast<int>(kStallWindowS));
                         } else if (!eval_failure_logged_) {
-                            // eval: log once per waypoint, do not teleport.
-                            append_failure(reason, x, y, yaw, false, 0.0, 0.0);
+                            append_failure(reason, x, y, yaw, false, 0.0, 0.0,
+                                           t_s, fwd, side, wz);
                             eval_failure_logged_ = true;
                         }
                     }

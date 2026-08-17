@@ -23,20 +23,26 @@ class TeleportHandler:
     orientation must be reordered back from xyzw to wxyz on apply.
     """
 
-    def __init__(self, node, apply_callback, qos_depth: int = 10):
+    def __init__(self, node, apply_callback, qos_depth: int = 10, enabled: bool = True):
         """
         Args:
             node: The ROS node (rclpy Node).
             apply_callback: Callable(x, y, z, qw, qx, qy, qz) that actually moves
                 the robot in the simulation. This keeps TeleportHandler decoupled
                 from MuJoCo internals and lets the sim node own the reset logic.
+            enabled: When False, subscribe but ignore teleports (eval scoring).
         """
         self._apply = apply_callback
+        self._enabled = enabled
+        self._node = node
         self._sub = node.create_subscription(
             PoseStamped, TOPIC_TELEPORT, self._on_teleport, qos_depth
         )
 
     def _on_teleport(self, msg: PoseStamped) -> None:
+        if not self._enabled:
+            self._node.get_logger().warn("[TELEPORT] ignored (eval / S10_ALLOW_TELEPORT=0)")
+            return
         p = msg.pose.position
         q = msg.pose.orientation
         # geometry_msgs xyzw -> MuJoCo wxyz

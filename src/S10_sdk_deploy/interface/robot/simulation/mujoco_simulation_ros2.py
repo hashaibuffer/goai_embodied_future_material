@@ -39,7 +39,9 @@ SCENE_XML_PATHS = {
 }
 DEFAULT_SCENE_NAME = os.environ.get("S10_MUJOCO_SCENE", "track")
 XML_PATH = str(SCENE_XML_PATHS.get(DEFAULT_SCENE_NAME, SCENE_XML_PATHS["track"]).resolve())
-USE_VIEWER = True
+USE_VIEWER = os.environ.get("S10_MUJOCO_VIEWER", "1").strip().lower() not in (
+    "0", "false", "no", "off",
+)
 TRACK_VIEWER = False
 DT = 0.001
 RENDER_INTERVAL = 10
@@ -84,7 +86,15 @@ def parse_cli_args():
         help="Custom MJCF path. Overrides --scene and S10_MUJOCO_SCENE.",
     )
     parser.add_argument("--model-key", default=MODEL_NAME, help="Robot key used for initial joint pose.")
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Disable the MuJoCo viewer (same as S10_MUJOCO_VIEWER=0).",
+    )
     args, ros_args = parser.parse_known_args()
+    if args.headless:
+        global USE_VIEWER
+        USE_VIEWER = False
     return args, ros_args
 
 
@@ -140,8 +150,15 @@ class MuJoCoSimulationNode(Node):
         self.joints_pub = self.create_publisher(JointsData, '/JOINTS_DATA', 200)
         self.pose_pub = PosePublisher(self)
 
-        # Teleport: reuse _set_initial_pose reset logic via a thin apply callback
-        self.teleport = TeleportHandler(self, self._apply_teleport)
+        # Teleport only in collect (or when S10_ALLOW_TELEPORT=1). Eval scoring
+        # must not move the robot if a stale /S10_TELEPORT arrives.
+        allow_env = os.environ.get("S10_ALLOW_TELEPORT")
+        if allow_env is None:
+            allow_teleport = os.environ.get("S10_AUTONAV_MODE", "eval") == "collect"
+        else:
+            allow_teleport = allow_env.strip().lower() in ("1", "true", "yes", "on")
+        self.teleport = TeleportHandler(self, self._apply_teleport, enabled=allow_teleport)
+        self.get_logger().info(f"[INFO] Teleport handler enabled={allow_teleport}")
 
         # base_link body id for ground-truth pose publishing (independent of track)
         self.base_link_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, TRACK_BODY_NAME)
@@ -172,12 +189,20 @@ class MuJoCoSimulationNode(Node):
         mujoco.mj_forward(self.model, self.data)
 
     def _apply_teleport(self, x, y, z, qw, qx, qy, qz):
-        """Move base to the requested pose and reset joints (reuses reset logic)."""
+        """Move base to the requested pose and fully reset dynamics."""
         qpos0 = self.data.qpos.copy()
         qpos0[7:7 + self.dof_num] = JOINT_INIT[self.model_key]
         qpos0[:3] = np.array([x, y, z], dtype=np.float64)
         qpos0[3:7] = np.array([qw, qx, qy, qz], dtype=np.float64)
         self.data.qpos[:] = qpos0
+        self.data.qvel[:] = 0.0
+        self.data.qacc[:] = 0.0
+        self.data.ctrl[:] = 0.0
+        self.kp_cmd[:] = 0.0
+        self.kd_cmd[:] = 0.0
+        self.pos_cmd[:] = 0.0
+        self.vel_cmd[:] = 0.0
+        self.tau_ff[:] = 0.0
         mujoco.mj_forward(self.model, self.data)
         self.get_logger().info(
             f"[TELEPORT] base set to pos=({x:.3f},{y:.3f},{z:.3f}) "
