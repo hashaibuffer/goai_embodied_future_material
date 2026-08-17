@@ -731,7 +731,7 @@
     name="hl_wheel_joint"
     type="continuous">
     <origin
-      xyz="0 0.054891 -0.18"
+      xyz="0 0.045891 -0.18"
       rpy="0 0 0" />
     <parent
       link="hl_knee" />

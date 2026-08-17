@@ -132,7 +132,7 @@
             <geom type="mesh" class="visual" mesh="hl_knee"/>
             <geom size="0.029 0.01 0.09" pos="0 -0.012 -0.09" type="box" class="collision"/>
             <geom size="0.04 0.025" pos="0 0.002 -0.18" quat="0.707107 0.707107 0 0" type="cylinder" class="collision"/>
-            <body name="hl_wheel" pos="0 0.054891 -0.18">
+            <body name="hl_wheel" pos="0 0.045891 -0.18">
               <inertial pos="-8e-06 0.001694 -5e-06" quat="0.707107 0 0 0.707107" mass="0.587952" diaginertia="0.002003 0.001059 0.001059"/>
               <joint name="hl_wheel_joint" pos="0 0 0" axis="0 -1 0" actuatorfrcrange="-14 14"/>
               <geom type="mesh" class="visual" mesh="hl_wheel"/>
