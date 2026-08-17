@@ -24,6 +24,8 @@ import rclpy
 from rclpy.node import Node
 from builtin_interfaces.msg import Time
 from drdds.msg import ImuData, JointsData, JointsDataCmd, MetaType, ImuDataValue, JointsDataValue, JointData, JointDataCmd
+from pose_publisher import PosePublisher
+from teleport import TeleportHandler
 
 
 
@@ -99,6 +101,8 @@ class MuJoCoSimulationNode(Node):
 
         super().__init__('mujoco_simulation')
 
+        self.model_key = model_key
+
         # 加载 MJCF
         if not os.path.isfile(xml_path):
             raise FileNotFoundError(f"Cannot find MJCF: {xml_path}")
@@ -134,6 +138,15 @@ class MuJoCoSimulationNode(Node):
         # ROS Publishers
         self.imu_pub = self.create_publisher(ImuData, '/IMU_DATA', 200)
         self.joints_pub = self.create_publisher(JointsData, '/JOINTS_DATA', 200)
+        self.pose_pub = PosePublisher(self)
+
+        # Teleport: reuse _set_initial_pose reset logic via a thin apply callback
+        self.teleport = TeleportHandler(self, self._apply_teleport)
+
+        # base_link body id for ground-truth pose publishing (independent of track)
+        self.base_link_body_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, TRACK_BODY_NAME)
+        if self.base_link_body_id < 0:
+            self.get_logger().warn(f"Pose publishing disabled; cannot find body '{TRACK_BODY_NAME}'")
 
         # ROS Subscriber
         self.cmd_sub = self.create_subscription(
@@ -157,6 +170,19 @@ class MuJoCoSimulationNode(Node):
         qpos0[3:7] = np.array([1, 0, 0, 0])
         self.data.qpos[:] = qpos0
         mujoco.mj_forward(self.model, self.data)
+
+    def _apply_teleport(self, x, y, z, qw, qx, qy, qz):
+        """Move base to the requested pose and reset joints (reuses reset logic)."""
+        qpos0 = self.data.qpos.copy()
+        qpos0[7:7 + self.dof_num] = JOINT_INIT[self.model_key]
+        qpos0[:3] = np.array([x, y, z], dtype=np.float64)
+        qpos0[3:7] = np.array([qw, qx, qy, qz], dtype=np.float64)
+        self.data.qpos[:] = qpos0
+        mujoco.mj_forward(self.model, self.data)
+        self.get_logger().info(
+            f"[TELEPORT] base set to pos=({x:.3f},{y:.3f},{z:.3f}) "
+            f"quat=({qw:.3f},{qx:.3f},{qy:.3f},{qz:.3f})"
+        )
 
     def _track_geom_index(self, name: str, prefix: str):
         if not name or not name.startswith(prefix):
@@ -340,6 +366,7 @@ class MuJoCoSimulationNode(Node):
                 # 采样 & 发送观测 (every 5 steps for 200 Hz)
                 if step % 5 == 0:
                     self._publish_robot_state(step)
+                    self._publish_base_pose()
 
                 # 可视化
                 if self.viewer and step % RENDER_INTERVAL == 0:
@@ -451,6 +478,15 @@ class MuJoCoSimulationNode(Node):
             joint.motion_temp = 40.0  # Dummy normal temp
             joint.driver_temp = 45.0  # Dummy normal temp
         self.joints_pub.publish(joints_msg)
+
+    def _publish_base_pose(self):
+        if self.base_link_body_id < 0:
+            return
+        self.pose_pub.publish(
+            self.data.xpos[self.base_link_body_id],
+            self.data.xquat[self.base_link_body_id],
+            self.timestamp,
+        )
 
 
 if __name__ == "__main__":
