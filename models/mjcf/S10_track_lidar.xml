@@ -2,7 +2,7 @@
   S10_track_lidar.xml — 带雷达的 S10 机器人模型文件
   Derived from official S10_description/s10_mjcf/mjcf/S10.xml
   与官方 S10.xml 的差异：
-    1. meshdir 改为回指官方 meshes 目录（本文件位于 s10_terrain_perception/models/mjcf/）
+    1. meshdir 改为回指官方 meshes 目录（本文件位于 models/mjcf/，故回指用 ../../src/）
     2. base_link 下新增 lidar_front_site (0.22335, 0, -0.0001)，作为 T2 射线扫描原点（官方 lidar.yaml / hardware spec 1.10 前雷达）
     3. base_link 下新增红色指示杆 lidar_visual，从传感器伸到车头外(x~0.65)，便于 Viewer 确认雷达位置
   本文件同时整合官方 scene.xml 与 track_overlay.xml（原 S10_track.xml 未改动）。
@@ -26,7 +26,7 @@
       </default>
   </default>
 
-  <compiler angle="radian" meshdir="../../../S10_sdk_deploy/S10_description/s10_mjcf/meshes/"/>
+  <compiler angle="radian" meshdir="../../src/S10_sdk_deploy/S10_description/s10_mjcf/meshes/"/>
   <compiler autolimits="true"/>
 
   <asset>
@@ -238,6 +238,6 @@
     </sensor>
 
     <!-- ===== 场景整合：沿用官方 S10_track.xml 的 scene + overlay，顺序不变 ===== -->
-    <include file="../../../S10_sdk_deploy/S10_description/s10_mjcf/mjcf/scene.xml"/>
-    <include file="../../../S10_sdk_deploy/S10_description/s10_mjcf/mjcf/track_overlay.xml"/>
+    <include file="../../src/S10_sdk_deploy/S10_description/s10_mjcf/mjcf/scene.xml"/>
+    <include file="../../src/S10_sdk_deploy/S10_description/s10_mjcf/mjcf/track_overlay.xml"/>
 </mujoco>

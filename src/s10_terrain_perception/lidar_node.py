@@ -22,10 +22,12 @@ import numpy as np
 import mujoco
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Header
+from std_msgs.msg import Header, Float32MultiArray, MultiArrayDimension
 from sensor_msgs.msg import PointCloud2, PointField
 from geometry_msgs.msg import PoseStamped
 from scipy.spatial.transform import Rotation
+
+from heightmap import HEIGHTMAP_DEFAULTS, build_heightmap, load_config as load_heightmap_config
 
 BASE_DIR = Path(__file__).resolve().parent
 WS_ROOT = BASE_DIR.parent.parent        # 本文件在 workspace_root/src/s10_terrain_perception/，上两级 = 根
@@ -42,6 +44,7 @@ class ScanFrame:
     scan_done_t: float       # time.monotonic() 扫描完成时刻（算帧龄）
     pos: np.ndarray          # (3,) 位姿快照，供调试 / T4 heightmap
     R: np.ndarray            # (3,3) 姿态快照
+    grid_policy: np.ndarray  # (2, policy_nx, policy_ny) float32 高度图 CHW（T4）
 DEFAULT_XML = WS_ROOT / "models" / "mjcf" / "S10_track_lidar.xml"
 DEFAULT_CONFIG = WS_ROOT / "configs" / "lidar.yaml"
 
@@ -63,6 +66,7 @@ DEFAULTS = {
     "range_noise_std_m": 0.01,
     "dropout_probability": 0.03,
     "log_interval_s": 5.0,
+    "heightmap": dict(HEIGHTMAP_DEFAULTS),   # T4 高度图配置（独立 configs/heightmap.yaml 覆盖）
 }
 
 
@@ -147,6 +151,12 @@ def load_config(path=None):
                 cfg["dropout_probability"] = float(l["dropout_probability"])
         except Exception as e:  # noqa: BLE001
             print(f"[lidar_node] 读取配置 {p} 失败，使用默认值: {e}")
+
+    # ---- T4 高度图配置：独立官方文件 configs/heightmap.yaml（T00 冻结，不塞进 lidar.yaml）----
+    try:
+        cfg["heightmap"] = load_heightmap_config()
+    except Exception as e:  # noqa: BLE001
+        print(f"[lidar_node] 读取 heightmap 配置失败，使用默认值: {e}")
     return cfg
 
 
@@ -185,6 +195,9 @@ class LidarNode(Node):
         self.dropout = float(self.cfg.get("dropout_probability", 0.0))
 
         self.pc_pub = self.create_publisher(PointCloud2, self.cfg["pointcloud_topic"], 10)
+        # ---- T4 高度图（yaw-only 水平系，只发布 policy 到 /S10_HEIGHTMAP）----
+        self.hm_cfg = self.cfg["heightmap"]
+        self.hm_pub = self.create_publisher(Float32MultiArray, self.hm_cfg["topic"], 10)
         self.create_subscription(PoseStamped, "/S10_BASE_POSE", self._pose_cb, 10)
 
         # ---- T3 异步化：扫描独立线程 + 最新帧缓存 ----
@@ -213,7 +226,10 @@ class LidarNode(Node):
             f"lidar 就绪(异步): model={Path(xml_path).name} nray={self.nray} "
             f"site='{self.cfg['site_name']}' offset={self.site_offset.round(3).tolist()} "
             f"cutoff={self.cfg['cutoff']}m rate={self.cfg['rate_hz']}Hz "
-            f"topic={self.cfg['pointcloud_topic']} 扫描线程已启动")
+            f"topic={self.cfg['pointcloud_topic']} 扫描线程已启动 | "
+            f"heightmap: {self.hm_cfg['policy_nx']}x{self.hm_cfg['policy_ny']} "
+            f"(full {self.hm_cfg['full_nx']}x{self.hm_cfg['full_ny']} 降采样) "
+            f"@{self.hm_cfg['topic']} (frame={self.hm_cfg['frame']})")
 
     def _pose_cb(self, msg):
         with self._lock:
@@ -276,12 +292,15 @@ class LidarNode(Node):
             if self.dropout > 0:
                 points = points[np.random.random(n_hit) >= self.dropout]
             if len(points):
+                # T4 高度图：与 points 同帧、锁外计算（yaw-only 水平系聚合，<1ms）
+                grid_policy = build_heightmap(points, pos, R, self.hm_cfg)   # (2, nx, ny)
                 done_t = time.monotonic()
                 with self._lock:                 # 锁内只做引用交换 + 统计（RMW 需锁）
                     self._frame_seq += 1
                     self._latest_frame = ScanFrame(
                         self._frame_seq, pose.header.stamp, points, n_hit,
-                        scan_ms, done_t, pos.copy(), R.copy())
+                        scan_ms, done_t, pos.copy(), R.copy(),
+                        grid_policy)
                     self._st["scan_count"] += 1
                     self._st["scan_ms_sum"] += scan_ms
                     if scan_ms > self._st["scan_ms_max"]:
@@ -327,6 +346,8 @@ class LidarNode(Node):
         if frame is None:
             return
         self.pc_pub.publish(self._make_pointcloud(frame.points, frame.stamp))
+        if frame.grid_policy is not None:
+            self.hm_pub.publish(self._make_policy_msg(frame.grid_policy, frame.stamp))
         self._log_stats_if_due(frame)
 
     def _log_stats_if_due(self, frame):
@@ -372,6 +393,23 @@ class LidarNode(Node):
         msg.is_bigendian = False
         msg.is_dense = True
         msg.data = points.astype(np.float32).tobytes()
+        return msg
+
+    def _make_policy_msg(self, grid, stamp):
+        """policy 高度图 (2, nx, ny) CHW → Float32MultiArray 展平。
+
+        展平 = C-order 先 nx*ny 高度再 nx*ny 掩码（flatten_order=channel_major_x_then_y）。
+        Float32MultiArray 无 header，frame 语义 = heightmap.frame（robot_horizontal）。
+        """
+        msg = Float32MultiArray()
+        msg.layout.dim = [
+            MultiArrayDimension(label="channels", size=int(grid.shape[0]),
+                                stride=int(grid.size // grid.shape[0])),
+            MultiArrayDimension(label="x", size=int(grid.shape[1]),
+                                stride=int(grid.shape[2])),
+            MultiArrayDimension(label="y", size=int(grid.shape[2]), stride=1),
+        ]
+        msg.data = grid.reshape(-1).tolist()
         return msg
 
 
