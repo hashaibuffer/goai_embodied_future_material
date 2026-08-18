@@ -8,8 +8,8 @@ heightmap.py — S10 T4 高度图编码（纯 numpy + yaml，不依赖 ROS）
 - full_grid (nx, ny) @ resolution 聚合：格内最高命中点 z（axis0=x, axis1=y）
 - ground_reference (valid_median)：机器人附近有效格的 z 中位数作为零高基准
 - height_normalized = clip((z - ground_ref) / height_divisor_m, 0, 1)
-- policy_grid (nx, ny)：在 full 上 bilinear_center 降采样（每格取 cell 中心双线性插值高度，
-  掩码取 cell 覆盖区域任一有效）
+- policy_grid (nx, ny)：在 full 上 bilinear_center 降采样（每格取 cell 中心掩码加权双线性
+  插值高度——无数据格 mask=0 不参与，不稀释真实命中；掩码取 cell 覆盖区域任一有效）
 - 输出展平 (2, nx, ny) channel-major：先全部高度，再全部掩码
 未知格：height = unknown_height_fill(0)，validity = unknown_validity(0)
 """
@@ -115,6 +115,8 @@ def _aggregate_full(p_h, hm):
     # 无命中格在末尾回填 0（= unknown_height_fill 语义）
     tmp = np.full((nx, ny), -np.inf, np.float32)
     np.maximum.at(tmp, (xi, yi), z)                        # 格内最高命中点 z
+    # 无命中格回填 0（unknown_height_fill 语义）。policy 降采样是掩码加权：
+    # mask=0 的格不参与插值，此回填值不会污染有效格高度，仅保持 full 数组可读。
     tmp[~np.isfinite(tmp)] = 0.0
     height[...] = tmp
     mask[xi, yi] = 1.0
@@ -141,7 +143,12 @@ def _ground_reference_median(height, mask, hm):
 
 
 def _downsample_bilinear_center(height, mask, hm):
-    """policy cell 中心在 full grid 上双线性采样高度；掩码取 cell 覆盖区域任一有效。"""
+    """policy cell 中心在 full grid 上掩码加权双线性采样高度；掩码取 cell 覆盖区域任一有效。
+
+    无数据格（mask=0）不参与高度插值：既不会把「回填 0 归一化后的假值」
+    （负 ground_ref 时 ≈0.48）混入 policy 高度，也不会稀释真实命中高度。
+    插值窗口全部无效 → den=0 → 高度 0（np.divide 守卫，无 NaN）。
+    """
     nx, ny = int(hm["policy_nx"]), int(hm["policy_ny"])
     f_nx, f_ny = height.shape
     x_min, x_max = float(hm["x_min"]), float(hm["x_max"])
@@ -153,7 +160,8 @@ def _downsample_bilinear_center(height, mask, hm):
     fx = (x_min + (np.arange(nx, dtype=np.float64) + 0.5) * res_px - x_min) / res_fx
     fy = (y_min + (np.arange(ny, dtype=np.float64) + 0.5) * res_py - y_min) / res_fy
 
-    # ---- 高度：双线性插值（边界 clip 到最后一个格）----
+    # ---- 高度：掩码加权双线性插值（边界 clip 到最后一个格）----
+    # mask=0 的格权重乘 0 后不参与；den==0 由 np.divide 的 where 守卫 → 0，不产生 NaN。
     x0 = np.clip(np.floor(fx).astype(np.intp), 0, f_nx - 1)
     y0 = np.clip(np.floor(fy).astype(np.intp), 0, f_ny - 1)
     x1 = np.clip(x0 + 1, 0, f_nx - 1)
@@ -161,12 +169,20 @@ def _downsample_bilinear_center(height, mask, hm):
     wx1 = np.clip(fx - x0, 0.0, 1.0); wx0 = 1.0 - wx1
     wy1 = np.clip(fy - y0, 0.0, 1.0); wy0 = 1.0 - wy1
 
-    pol_h = (
-        wx0[:, None] * wy0[None, :] * height[np.ix_(x0, y0)]
-        + wx1[:, None] * wy0[None, :] * height[np.ix_(x1, y0)]
-        + wx0[:, None] * wy1[None, :] * height[np.ix_(x0, y1)]
-        + wx1[:, None] * wy1[None, :] * height[np.ix_(x1, y1)]
-    )
+    h00 = height[np.ix_(x0, y0)]; m00 = mask[np.ix_(x0, y0)]
+    h10 = height[np.ix_(x1, y0)]; m10 = mask[np.ix_(x1, y0)]
+    h01 = height[np.ix_(x0, y1)]; m01 = mask[np.ix_(x0, y1)]
+    h11 = height[np.ix_(x1, y1)]; m11 = mask[np.ix_(x1, y1)]
+
+    w00 = wx0[:, None] * wy0[None, :]
+    w10 = wx1[:, None] * wy0[None, :]
+    w01 = wx0[:, None] * wy1[None, :]
+    w11 = wx1[:, None] * wy1[None, :]
+
+    den = w00 * m00 + w10 * m10 + w01 * m01 + w11 * m11      # 有效权重和 ∈ [0,1]
+    num = (w00 * m00 * h00 + w10 * m10 * h10
+           + w01 * m01 * h01 + w11 * m11 * h11)
+    pol_h = np.divide(num, den, out=np.zeros_like(num), where=den > 0.0)
 
     # ---- 掩码：policy cell 覆盖的 full 区域任一有效（保守，不丢有效格）----
     half_x = 0.5 * res_px / res_fx
