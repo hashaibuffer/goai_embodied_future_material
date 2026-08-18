@@ -27,6 +27,20 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(drdds REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
+
+set(S10_TERRAIN_POLICY_DIR
+  "${CMAKE_CURRENT_SOURCE_DIR}/../s10_terrain_policy/cpp"
+)
+set(S10_TERRAIN_DEFAULT_MODEL
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../models/terrain_locomotion.onnx"
+)
+if(NOT EXISTS "${S10_TERRAIN_POLICY_DIR}/terrain_policy_runner.hpp")
+  message(FATAL_ERROR "Terrain policy runner is missing from this repository")
+endif()
+if(NOT EXISTS "${S10_TERRAIN_DEFAULT_MODEL}")
+  message(FATAL_ERROR "Default terrain policy model is missing from this repository")
+endif()
 
 set(THIRD_PARTY ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 
@@ -41,6 +55,11 @@ include_directories(
   ${THIRD_PARTY}/eigen/
   ${THIRD_PARTY}/gamepad/include
   ${THIRD_PARTY}/onnxruntime/${BUILD_PLATFORM}/include
+  ${S10_TERRAIN_POLICY_DIR}
+)
+
+add_compile_definitions(
+  S10_TERRAIN_DEFAULT_MODEL="${S10_TERRAIN_DEFAULT_MODEL}"
 )
 
 # 子目录
@@ -68,6 +87,7 @@ ament_target_dependencies(rl_deploy
   rclcpp
   drdds
   geometry_msgs
+  std_msgs
 )
 if(BUILD_PLATFORM STREQUAL "arm")
   target_link_libraries(rl_deploy

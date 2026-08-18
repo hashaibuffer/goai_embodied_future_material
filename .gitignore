@@ -4,3 +4,5 @@ log/
 vscode/
 tmp/
 AGENTS.md
+__pycache__/
+*.py[cod]
