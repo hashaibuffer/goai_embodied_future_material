@@ -98,6 +98,20 @@ def test_step_clip_upper(cfg):
     assert m[8, 5] == 1.0
 
 
+# ---------- T6-5 clip_m 契约：下台阶(-0.4m) → 归一化 -0.5 ----------
+def test_step_clip_lower(cfg):
+    """回归：下台阶/坑 相对地面 -0.4m → clip(-0.4, -0.40, 0.80)/0.8 = -0.5，
+    不再被固定 [0,1] clip 成 0（无区分度）。"""
+    g = hm.build_heightmap(_scene_worldfixed(step_z=-0.4), POS, np.eye(3), cfg)
+    h, m = g[0], g[1]
+
+    # 台阶中心 cell (i=8, 中心 x≈1.3) 完全覆盖 → 高度 (clip(-0.4-0,-0.4,0.8))/0.8 = -0.5
+    assert abs(h[8, 5] - (-0.5)) < 0.05, f"下台阶应≈-0.5, got {h[8, 5]}"
+    assert m[8, 5] == 1.0
+    # 地面 cell (i=3) → 高度≈0、掩码 1（不受负值影响）
+    assert abs(h[3, 5]) < 0.05 and m[3, 5] == 1.0
+
+
 # ---------- T6-4 方向随车旋转：掩码质心旋转 = 车 yaw 旋转 ----------
 def test_step_rotates_with_robot(cfg):
     world = _scene_worldfixed()                     # 同一世界固定台阶

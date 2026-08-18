@@ -7,7 +7,8 @@ heightmap.py — S10 T4 高度图编码（纯 numpy + yaml，不依赖 ROS）
   x=前方、y=左侧、z=世界垂直（+Z up）
 - full_grid (nx, ny) @ resolution 聚合：格内最高命中点 z（axis0=x, axis1=y）
 - ground_reference (valid_median)：机器人附近有效格的 z 中位数作为零高基准
-- height_normalized = clip((z - ground_ref) / height_divisor_m, 0, 1)
+- height_normalized = clip(z - ground_ref, clip_m[0], clip_m[1]) / height_divisor_m
+  （clip_m 冻结契约:相对高度按 [-0.40, 0.80]m 裁剪再除 0.8 → 有效范围 [-0.5, 1];坑→负）
 - policy_grid (nx, ny)：在 full 上 bilinear_center 降采样（每格取 cell 中心掩码加权双线性
   插值高度——无数据格 mask=0 不参与，不稀释真实命中；掩码取 cell 覆盖区域任一有效）
 - 输出展平 (2, nx, ny) channel-major：先全部高度，再全部掩码
@@ -145,8 +146,9 @@ def _ground_reference_median(height, mask, hm):
 def _downsample_bilinear_center(height, mask, hm):
     """policy cell 中心在 full grid 上掩码加权双线性采样高度；掩码取 cell 覆盖区域任一有效。
 
-    无数据格（mask=0）不参与高度插值：既不会把「回填 0 归一化后的假值」
-    （负 ground_ref 时 ≈0.48）混入 policy 高度，也不会稀释真实命中高度。
+    无数据格（mask=0）不参与高度插值：既不会把「回填 0 归一化后的值」
+    （ground_ref<0 时 = -ground_ref/0.8 > 0，介于地面与台阶之间）混入 policy 高度，
+    也不会稀释真实命中高度。
     插值窗口全部无效 → den=0 → 高度 0（np.divide 守卫，无 NaN）。
     """
     nx, ny = int(hm["policy_nx"]), int(hm["policy_ny"])
@@ -216,8 +218,13 @@ def build_heightmap(points, pos, R, hm):
     full_h, full_m = _aggregate_full(p_h, hm)             # (nx, ny)
     ground_ref = _ground_reference_median(full_h, full_m, hm)
 
+    # clip_m 契约(T00 冻结 configs/heightmap.yaml):相对地面高度先按 clip_m [-0.40, 0.80]m
+    # 裁剪再除以 divisor,有效范围 [-0.5, 1.0]。坑/下台阶编码为负(如 -0.4m → -0.5),
+    # 不再被 clip 成 0 失去区分度;上限 +0.8m 台阶 → 1.0。
+    clip_lo, clip_hi = hm["clip_m"]
     divisor = float(hm["height_divisor_m"])
-    full_norm = np.clip((full_h - ground_ref) / divisor, 0.0, 1.0)
+    relative_h = np.clip(full_h - ground_ref, clip_lo, clip_hi)
+    full_norm = relative_h / divisor
 
     pol_h, pol_m = _downsample_bilinear_center(full_norm, full_m, hm)
 

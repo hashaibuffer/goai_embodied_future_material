@@ -77,8 +77,9 @@ def test_ground_reference_and_normalize(cfg):
 
     policy = hm.build_heightmap(np.vstack([ground, obst]), POS, np.eye(3), cfg)
     # 障碍 full 格(18,16) 归一化 = clip((0.8-0)/0.8)=1.0；
-    # policy cell(7,6) 中心(1.075,0.125) 插值系数 wx0*wy0=0.25*0.75 → 0.1875
-    assert abs(policy[0, 7, 6] - 0.1875) < 0.02
+    # policy cell(7,6) 掩码加权：4 插值角中仅 (18,16) 有效（权重 wx0*wy0=0.25*0.75），
+    # 无数据角 mask=0 不参与 → 高度不被稀释，仍为 1.0（旧双线性被稀释成 0.1875）
+    assert abs(policy[0, 7, 6] - 1.0) < 0.02
 
 
 # ---------- T4 网格索引方向 + 边界 ----------
@@ -160,3 +161,51 @@ def test_config_loading():
     assert c["ground_ref_y_range"] == (-0.40, 0.40)
     assert c["unknown_validity"] == 0.0
     assert c["downsample"] == "bilinear_center"
+
+
+# ---------- T11 掩码加权：负 ground_ref 无 phantom 高度（真实地形：地面在车下）----------
+def test_mask_weighted_no_phantom_with_neg_ref(cfg):
+    """回归：地面在 pos 下方（ground_ref=-0.4）时，无数据格回填 0 归一化后 = 0.5，
+    旧双线性会把它混入部分有效格产生假台阶；掩码加权后无数据格不参与 → 无 phantom。"""
+    gx = np.array([-0.3, -0.1, 0.1, 0.3]); gy = np.array([-0.3, -0.1, 0.1, 0.3])
+    ground = np.stack([np.repeat(gx, 4), np.tile(gy, 4), np.full(16, -0.4)], axis=1) + POS
+    obst = world([1.0, 0.1, 0.4])[None, :]          # 0.4m 障碍 → 归一化 (0.4+0.4)/0.8=1.0
+    pts = np.vstack([ground, obst])
+    g = hm.build_heightmap(pts, POS, np.eye(3), cfg); h, m = g[0], g[1]
+
+    full_h, full_m = hm._aggregate_full(pts - POS, cfg)
+    ref = hm._ground_reference_median(full_h, full_m, cfg)
+    assert abs(ref - (-0.4)) < 1e-6                   # 负 ground_ref，复现真实地形场景
+    assert m[7, 6] == 1.0 and abs(h[7, 6] - 1.0) < 0.02   # 障碍不被无数据角稀释（旧=0.59375）
+    assert m[2, 6] == 1.0 and abs(h[2, 6]) < 0.02         # 地面边缘格无 phantom 台阶（旧=0.40625）
+    assert np.isfinite(g).all()
+
+
+# ---------- T12 掩码加权：部分遮挡时障碍高度不被稀释 ----------
+def test_mask_weighted_partial_occlusion_height_preserved(cfg):
+    """9 点障碍簇全落在 full 格(18,16)（0.4m），其余 3 插值角无数据：
+    掩码加权保留 0.5，不被无数据角稀释（旧=0.09375）；相邻全未知格保持 0/0。"""
+    gx = np.array([-0.3, -0.1, 0.1, 0.3]); gy = np.array([-0.3, -0.1, 0.1, 0.3])
+    ground = np.stack([np.repeat(gx, 4), np.tile(gy, 4), np.zeros(16)], axis=1) + POS
+    px = np.array([1.00, 1.02, 1.04]); py = np.array([0.10, 0.12, 0.14])
+    cluster = np.array([[x, y, 0.40] for x in px for y in py], dtype=np.float64)
+    pts = np.vstack([ground, POS + cluster])
+    g = hm.build_heightmap(pts, POS, np.eye(3), cfg); h, m = g[0], g[1]
+
+    assert m[7, 6] == 1.0 and abs(h[7, 6] - 0.5) < 0.02   # 0.4m→0.5，不被稀释（旧=0.09375）
+    assert m[7, 8] == 0.0 and h[7, 8] == 0.0             # 相邻全未知格保持 0/0
+
+
+# ---------- T13 掩码加权：全未知 cell 保持 0/0 + den 守卫无 NaN ----------
+def test_mask_weighted_unknown_cell_zero_and_no_nan(cfg):
+    """覆盖区角落有数据（full(17,16)）但 4 插值角全无数据 → 掩码 1 + 高度 0（den 守卫，
+    不得产生 NaN）；完全无观测格 → 0/0。"""
+    gx = np.array([-0.3, -0.1, 0.1, 0.3]); gy = np.array([-0.3, -0.1, 0.1, 0.3])
+    ground = np.stack([np.repeat(gx, 4), np.tile(gy, 4), np.zeros(16)], axis=1) + POS
+    far = world([0.95, 0.10, 0.0])[None, :]   # 落在 full(17,16)，不在 cell(7,6) 的 4 插值角
+    pts = np.vstack([ground, far])
+    g = hm.build_heightmap(pts, POS, np.eye(3), cfg); h, m = g[0], g[1]
+
+    assert m[14, 6] == 0.0 and h[14, 6] == 0.0    # 完全无观测格
+    assert m[7, 6] == 1.0 and h[7, 6] == 0.0      # 覆盖区角落有效但 4 插值角全无效 → 守卫给 0
+    assert np.isfinite(g).all()                   # den==0 不得产生 0/0 NaN

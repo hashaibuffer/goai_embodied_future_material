@@ -77,12 +77,14 @@ def test_overlay_group2_excluded():
 
 
 def test_no_fake_wall_on_flat_ground():
-    """平地上没有假障碍墙：不过滤时存在胶囊假墙格（高度显著抬升），过滤后回到真实地形。"""
+    """平地上没有假障碍墙：高度图不被无数据格产生假墙（掩码加权修复后的正确行为）。
+
+    旧双线性：胶囊命中集中在 full 格 col10（x∈[0.2,0.3]），不在 policy cell 的 4 个
+    插值角内；该 cell 高度由无数据格回填 0 归一化（负 ground_ref 时）≈0.25 决定 → 假墙。
+    掩码加权修复后无数据格不参与 → 高度≈0，假墙消除（正是修复目标）。
+    """
     _, _, pol_f, pol_a = _setup()
     h_f, h_a = pol_f[0], pol_a[0]
-    diff = h_a - h_f
-    # 存在"不过滤显著更高"的格 = 胶囊假墙（track_segment_000 表面 z≈0.2 → 归一化 0.25）
-    assert diff.max() > 0.05, f"对照组应出现胶囊假墙(最大格差={diff.max():.3f})"
-    # 假墙格在过滤后回到真实地形（低高度），即平地上不再有假障碍墙
-    wall = diff > 0.05
-    assert h_f[wall].max() < 0.15, f"过滤后假墙格应为真实地形(max={h_f[wall].max():.3f})"
+    # 过滤与否，高度图都不应出现假墙（旧代码有 0.25 污染假墙，现应消除）
+    assert h_a.max() < 0.15, f"对照组不应有假墙(max={h_a.max():.3f})"
+    assert h_f.max() < 0.15, f"过滤后不应有假墙(max={h_f.max():.3f})"

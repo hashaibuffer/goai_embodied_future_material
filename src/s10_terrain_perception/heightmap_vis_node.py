@@ -11,8 +11,9 @@ RViz 没有 Float32MultiArray 显示插件，本节点把已有的消息转发�
 
 发布（仅供 RViz 显示）：
   - /tf             TF robot_horizontal → world（yaw-only，从位姿提取，去掉 roll/pitch）
-  - /S10_HEIGHTMAP_VIS   (MarkerArray) 每有效格一个彩色方块：高度=归一化高度×0.4m，
-                    颜色 蓝(0)→绿(0.5)→红(1)，frame=robot_horizontal
+  - /S10_HEIGHTMAP_VIS   (MarkerArray) 每有效格一个彩色方块：高度=归一化高度×0.4m
+                    （clip_m 契约范围 [-0.5,1]，负值方块向下），
+                    颜色 深蓝(-0.5)→蓝(0)→绿(0.5)→红(1)，frame=robot_horizontal
   - /S10_SIM_LIDAR_BODY  (PointCloud2) world 点云经 yaw-only 转到车系，frame=robot_horizontal
 
 lidar_node.py / heightmap.py（T4 核心）零改动，本节点只做可视化转发。
@@ -39,7 +40,7 @@ WORLD = "world"
 HEIGHTMAP_VIS_TOPIC = "/S10_HEIGHTMAP_VIS"
 LIDAR_BODY_TOPIC = "/S10_SIM_LIDAR_BODY"
 POSE_TOPIC = "/S10_BASE_POSE"
-VIS_HEIGHT_SCALE = 0.4          # 归一化高度 1.0 → 0.4m 方块高（可视化尺度）
+VIS_HEIGHT_SCALE = 0.4          # 归一化高度 1.0 → 0.4m 方块高；负值(坑)方块向下（可视化尺度）
 
 
 class HeightmapVisNode(Node):
@@ -144,8 +145,8 @@ class HeightmapVisNode(Node):
             for j in range(self.ny):
                 if mask[i, j] <= 0.5:
                     continue
-                v = float(min(max(float(h[i, j]), 0.0), 1.0))
-                zh = max(v * VIS_HEIGHT_SCALE, 0.02)         # 最矮留 2cm 薄片
+                v = float(np.clip(h[i, j], -0.5, 1.0))       # clip_m 契约归一化到 [-0.5,1]
+                zh = max(abs(v) * VIS_HEIGHT_SCALE, 0.02)    # 最矮留 2cm 薄片；负值方块向下
                 m = Marker()
                 m.header.frame_id = self.frame
                 m.header.stamp = stamp
@@ -155,7 +156,7 @@ class HeightmapVisNode(Node):
                 m.action = Marker.ADD
                 m.pose.position.x = self.x_min + (i + 0.5) * self.res_x
                 m.pose.position.y = self.y_min + (j + 0.5) * self.res_y
-                m.pose.position.z = zh / 2.0
+                m.pose.position.z = v * VIS_HEIGHT_SCALE / 2.0   # 负值 → 方块中心在地面下
                 m.pose.orientation.w = 1.0
                 m.scale.x = self.res_x * 0.95
                 m.scale.y = self.res_y * 0.95
@@ -193,14 +194,17 @@ class HeightmapVisNode(Node):
 
     @staticmethod
     def _height_color(v):
-        """蓝(0) → 绿(0.5) → 红(1)。"""
+        """深蓝(-0.5) → 蓝(0) → 绿(0.5) → 红(1)。负值(坑/下台阶)用深蓝系与正值区分。"""
         c = ColorRGBA()
-        if v < 0.5:
+        if v < 0.0:
+            t = v / -0.5                                   # 0 → 0, -0.5 → 1
+            c.r, c.g, c.b = 0.0, 0.0, 1.0 - 0.6 * t        # 蓝 → 深蓝(坑)
+        elif v < 0.5:
             t = v * 2.0
-            c.r, c.g, c.b = 0.0, t, 1.0 - t
+            c.r, c.g, c.b = 0.0, t, 1.0 - t                # 蓝 → 绿
         else:
             t = (v - 0.5) * 2.0
-            c.r, c.g, c.b = t, 1.0 - t, 0.0
+            c.r, c.g, c.b = t, 1.0 - t, 0.0                # 绿 → 红
         c.a = 1.0
         return c
 
