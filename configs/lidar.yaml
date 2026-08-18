@@ -1,0 +1,32 @@
+# Frozen by T00. Do not replace this sensor with mesh height or Isaac height_scanner.
+# Heightmaps are an encoding of these rays, not a second terrain source.
+
+topics:
+  lidar: /S10_SIM_LIDAR
+
+lidar:
+  # Hardware spec 1.10, body frame, metres. Site must be parented to base_link.
+  body_frame_origin_m: [0.22335, 0.0, -0.0001]
+  site_name: lidar_front_site
+  # Raycast via mj_multiRay on the sim thread. Do not emit 181x24 MJCF
+  # rangefinders (those would run at 1 kHz against 2200+ meshes).
+  implementation: mj_multiRay
+  scan_on_sim_thread: true
+  range_min: 0.10
+  range_max: 6.00
+  horizontal_fov_deg: 180
+  horizontal_rays: 181
+  vertical_fov_deg: 55
+  vertical_rays: 24
+  update_rate_hz: 20
+  # Overlay capsules / waypoint spheres / height posts are group 2, contype 0.
+  exclude_geom_groups: [2]
+  exclude_robot_geoms: true
+  range_noise_std_m: 0.01
+  dropout_probability: 0.03
+  # If the ThinkPad cannot hold 1 kHz stepping, lower rays in this order.
+  degrade_order: [vertical_rays, horizontal_rays, update_rate_hz]
+  min_working:
+    horizontal_rays: 91
+    vertical_rays: 8
+    update_rate_hz: 10

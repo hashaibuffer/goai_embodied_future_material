@@ -1,0 +1,34 @@
+# Frozen by T00. Changing policy_grid, flatten_order, or clip_m invalidates
+# every npz and ONNX. Unknown cells stay invalid; never fill from mesh height.
+
+topics:
+  heightmap: /S10_HEIGHTMAP
+
+heightmap:
+  # Robot yaw-only (horizontal) frame: +X forward, +Y left, +Z up.
+  # Drop roll/pitch before projecting rays or slopes become fake walls.
+  frame: robot_horizontal
+  x_min: -0.8
+  x_max: 3.2
+  y_min: -1.5
+  y_max: 1.5
+  resolution: 0.10
+  # Full raster before downsample. nx = (3.2 - -0.8) / 0.10 = 40.
+  full_grid: [40, 30]          # [nx, ny]
+  policy_grid: [16, 12]        # [nx, ny] fed to the network
+  downsample: bilinear_center  # sample each policy cell center on the full grid
+  channels: [height_normalized, validity_mask]
+  # C-order of array shape (2, nx, ny): all heights, then all validity.
+  flatten_order: channel_major_x_then_y
+  clip_m: [-0.40, 0.80]
+  height_divisor_m: 0.80
+  unknown_height_fill: 0.0
+  unknown_validity: 0.0
+  # Zero-height reference: median of valid cells near the robot, not world z.
+  ground_reference:
+    method: valid_median
+    x_range: [-0.40, 0.40]
+    y_range: [-0.40, 0.40]
+  # Index 0 on each axis is the minimum coordinate (rear / right).
+  axis0: x
+  axis1: y
