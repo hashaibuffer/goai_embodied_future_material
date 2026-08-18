@@ -105,16 +105,19 @@ class HeightmapVisNode(Node):
 
     # ---------- 发布 ----------
     def _tick(self):
-        self._publish_tf()
+        # 统一时间戳：TF 与所有显示消息用同一时刻，避免 RViz 查变换时
+        # "extrapolation into the future"（点云 stamp 比 TF 新 0.24ms 就会触发）
+        now = self.get_clock().now().to_msg()
+        self._publish_tf(now)
         if self._grid is not None:
-            self._hm_vis_pub.publish(self._make_heightmap_markers())
+            self._hm_vis_pub.publish(self._make_heightmap_markers(now))
         if self._points is not None and len(self._points):
-            self._lidar_body_pub.publish(self._make_body_pointcloud())
+            self._lidar_body_pub.publish(self._make_body_pointcloud(now))
 
-    def _publish_tf(self):
+    def _publish_tf(self, stamp):
         """TF robot_horizontal → world（yaw-only，车动图跟着动）。"""
         ts = TransformStamped()
-        ts.header.stamp = self.get_clock().now().to_msg()
+        ts.header.stamp = stamp
         ts.header.frame_id = WORLD
         ts.child_frame_id = self.frame
         ts.transform.translation.x = float(self._pos[0])
@@ -126,7 +129,7 @@ class HeightmapVisNode(Node):
         ts.transform.rotation.w = float(np.cos(self._yaw / 2.0))
         self._tf_pub.publish(TFMessage(transforms=[ts]))
 
-    def _make_heightmap_markers(self):
+    def _make_heightmap_markers(self, stamp):
         """高度图 (2,nx,ny) → MarkerArray：每有效格一个彩色方块（frame=robot_horizontal）。"""
         h, mask = self._grid[0], self._grid[1]
         ma = MarkerArray()
@@ -137,7 +140,6 @@ class HeightmapVisNode(Node):
         clean.id = 0
         ma.markers.append(clean)
 
-        stamp = self.get_clock().now().to_msg()
         for i in range(self.nx):
             for j in range(self.ny):
                 if mask[i, j] <= 0.5:
@@ -163,7 +165,7 @@ class HeightmapVisNode(Node):
                 ma.markers.append(m)
         return ma
 
-    def _make_body_pointcloud(self):
+    def _make_body_pointcloud(self, stamp):
         """world 点云经 yaw-only 转到车系（frame=robot_horizontal），雷达随车移动。"""
         yaw = self._yaw
         Ry = np.array([[np.cos(yaw), -np.sin(yaw), 0.0],
@@ -173,7 +175,7 @@ class HeightmapVisNode(Node):
 
         msg = PointCloud2()
         msg.header = Header()
-        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.stamp = stamp
         msg.header.frame_id = self.frame
         msg.height = 1
         msg.width = len(ph)
