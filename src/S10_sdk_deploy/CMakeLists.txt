@@ -35,6 +35,9 @@ set(S10_TERRAIN_POLICY_DIR
 set(S10_TERRAIN_DEFAULT_MODEL
   "${CMAKE_CURRENT_SOURCE_DIR}/../../models/terrain_locomotion.onnx"
 )
+set(S10_OFFICIAL_TEACHER_MODEL
+  "${CMAKE_CURRENT_SOURCE_DIR}/policy/policy.onnx"
+)
 if(NOT EXISTS "${S10_TERRAIN_POLICY_DIR}/terrain_policy_runner.hpp")
   message(FATAL_ERROR "Terrain policy runner is missing from this repository")
 endif()
@@ -60,6 +63,7 @@ include_directories(
 
 add_compile_definitions(
   S10_TERRAIN_DEFAULT_MODEL="${S10_TERRAIN_DEFAULT_MODEL}"
+  S10_OFFICIAL_TEACHER_MODEL="${S10_OFFICIAL_TEACHER_MODEL}"
 )
 
 # 子目录

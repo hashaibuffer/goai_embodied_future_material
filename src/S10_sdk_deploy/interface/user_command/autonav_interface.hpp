@@ -31,6 +31,7 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
+#include <drdds/msg/auto_nav_status.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -107,6 +108,7 @@ private:
     rclcpp::Node::SharedPtr node_;
     rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr pose_sub_;
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr teleport_pub_;
+    rclcpp::Publisher<drdds::msg::AutoNavStatus>::SharedPtr status_pub_;
 
     bool has_pose_ = false;
     double pose_x_ = 0.0, pose_y_ = 0.0, pose_z_ = 0.0;
@@ -129,10 +131,41 @@ private:
     std::deque<PoseSample> stall_history_;
     std::chrono::steady_clock::time_point last_no_pose_log_;
     std::chrono::steady_clock::time_point last_cmd_log_;
+    std::chrono::steady_clock::time_point last_status_pub_;
     bool eval_failure_logged_ = false;      // eval: log stall once per waypoint
     std::chrono::steady_clock::time_point teleport_cooldown_until_;  // collect: post-teleport grace
 
     double min_x_ = 0.0, max_x_ = 0.0, min_y_ = 0.0, max_y_ = 0.0;
+    std::uint32_t episode_id_ = 0;
+
+    static std::uint8_t failure_code(const std::string& reason)
+    {
+        if (reason == "stall") return 1;
+        if (reason == "tumble") return 2;
+        if (reason == "out_of_bounds") return 3;
+        return 0;
+    }
+
+    void publish_status(bool teleported = false, std::uint8_t failure = 0)
+    {
+        if (!status_pub_) return;
+        drdds::msg::AutoNavStatus msg;
+        msg.timestamp_ns = node_->get_clock()->now().nanoseconds();
+        msg.waypoint_id = next_idx_ > 0 ? next_idx_ - 1 : 0;
+        msg.next_waypoint_id = next_idx_;
+        msg.episode_id = episode_id_;
+        msg.collect_mode = mode_ == Mode::COLLECT;
+        msg.teleported = teleported;
+        msg.failure_code = failure;
+        msg.pose.position.x = pose_x_;
+        msg.pose.position.y = pose_y_;
+        msg.pose.position.z = pose_z_;
+        msg.pose.orientation.x = pose_qx_;
+        msg.pose.orientation.y = pose_qy_;
+        msg.pose.orientation.z = pose_qz_;
+        msg.pose.orientation.w = pose_qw_;
+        status_pub_->publish(msg);
+    }
 
     static double wrap_angle(double a)
     {
@@ -432,6 +465,8 @@ private:
 
         std::cout << "[AutoNav] failure recorded: " << reason
                   << " at wp~=" << (next_idx_ > 0 ? next_idx_ - 1 : 0) << std::endl;
+        if (teleported) ++episode_id_;
+        publish_status(teleported, failure_code(reason));
     }
 
     void request_teleport(double tx, double ty, double tz, double yaw)
@@ -468,8 +503,13 @@ private:
     {
         last_no_pose_log_ = std::chrono::steady_clock::now();
         last_cmd_log_ = std::chrono::steady_clock::now();
+        last_status_pub_ = std::chrono::steady_clock::now();
 
         while (running_) {
+            if (!rclcpp::ok()) {
+                running_ = false;
+                break;
+            }
             auto now = std::chrono::steady_clock::now();
             if (node_) {
                 rclcpp::spin_some(node_);
@@ -482,6 +522,11 @@ private:
 
             uint8_t state = msfb_->GetCurrentState();
             process_mode_command(state);
+
+            if (std::chrono::duration<double>(now - last_status_pub_).count() >= 0.05) {
+                publish_status();
+                last_status_pub_ = now;
+            }
 
             bool ok = has_pose_;
             double x = pose_x_, y = pose_y_;
@@ -619,6 +664,8 @@ public:
             [this](const geometry_msgs::msg::PoseStamped::SharedPtr msg) { pose_callback(msg); });
         teleport_pub_ = node_->create_publisher<geometry_msgs::msg::PoseStamped>(
             "/S10_TELEPORT", 10);
+        status_pub_ = node_->create_publisher<drdds::msg::AutoNavStatus>(
+            "/S10_AUTONAV_STATUS", rclcpp::QoS(20).reliable());
 
         running_ = true;
         nav_thread_ = std::thread(&AutoNavCommandInterface::nav_loop, this);

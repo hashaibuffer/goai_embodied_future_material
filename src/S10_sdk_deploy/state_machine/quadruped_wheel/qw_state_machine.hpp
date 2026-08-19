@@ -40,16 +40,22 @@ public:
     const RemoteCommandType remote_cmd_type_;
     const TerrainPolicyRunner::Controller terrain_controller_;
     const std::string terrain_model_path_;
+    const bool teacher_collect_;
+    const std::string teacher_model_path_;
 
     QwStateMachine(
         RobotName robot_name,
         RemoteCommandType rct,
         TerrainPolicyRunner::Controller terrain_controller,
-        std::string terrain_model_path):StateMachineBase(RobotType::QuadrupedWheel),
+        std::string terrain_model_path,
+        bool teacher_collect,
+        std::string teacher_model_path):StateMachineBase(RobotType::QuadrupedWheel),
     robot_name_(robot_name),
     remote_cmd_type_(rct),
     terrain_controller_(terrain_controller),
-    terrain_model_path_(std::move(terrain_model_path)) {}
+    terrain_model_path_(std::move(terrain_model_path)),
+    teacher_collect_(teacher_collect),
+    teacher_model_path_(std::move(teacher_model_path)) {}
     ~QwStateMachine(){}
 
     void Start(){
@@ -88,7 +94,8 @@ public:
         idle_controller_ = std::make_shared<IdleState>(robot_name_, "idle_state", data_ptr);
         standup_controller_ = std::make_shared<StandUpState>(robot_name_, "standup_state", data_ptr);
         rl_controller_ = std::make_shared<RLControlState>(
-            robot_name_, "rl_control", data_ptr, terrain_controller_, terrain_model_path_);
+            robot_name_, "rl_control", data_ptr, terrain_controller_, terrain_model_path_,
+            teacher_collect_, teacher_model_path_);
         joint_damping_controller_ = std::make_shared<JointDampingState>(robot_name_, "joint_damping", data_ptr);
         liedown_controller_ = std::make_shared<LieDownState>(robot_name_, "liedown_state", data_ptr);
 

@@ -1,0 +1,29 @@
+schema_version: 1
+topics:
+  sample: /S10_TD_SAMPLE
+  autonav_status: /S10_AUTONAV_STATUS
+collection:
+  rate_hz: 50
+  pre_failure_seconds: 5.0
+  chunk_size: 5000
+  teacher_source: official
+  initial_pose_jitter_m: 0.03
+  initial_yaw_jitter_rad: 0.05
+terrain_command:
+  forward_roi_x_indices: [4, 11]
+  step_threshold_m: 0.25
+  drop_threshold_m: 0.20
+  slope_threshold_m: 0.20
+  unknown_risk_start: 0.35
+  minimum_speed_scale: 0.25
+  avoidance_gain: 1.20
+  maximum_avoidance_vy: 0.25
+  slew_per_policy_step: [0.04, 0.03, 0.06]
+failure_codes:
+  none: 0
+  stall: 1
+  tumble: 2
+  out_of_bounds: 3
+teacher_source_codes:
+  official: 0
+  privileged: 1

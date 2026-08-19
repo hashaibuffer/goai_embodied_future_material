@@ -1,0 +1,11 @@
+int64 timestamp_ns
+uint64 sequence
+float32[441] obs_student
+float32[57] obs_teacher
+float32[384] heightmap
+float32[3] cmd_raw
+float32[3] cmd_terrain
+float32[16] action_teacher
+float32[8] risk_features
+bool heightmap_valid
+float32 heightmap_age_ms
