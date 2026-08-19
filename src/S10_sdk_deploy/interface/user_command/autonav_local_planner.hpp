@@ -33,7 +33,7 @@ inline constexpr float kHeightDivisorM = 0.80f;   // 归一化除数，回乘得
 struct Params {
     float horizon_s      = 1.5f;     // 积分时长 (s)
     float dt_s           = 0.1f;     // 积分步长 (s) -> 15 点
-    float max_wz         = 1.0f;     // 转向候选上限 (rad/s)，对齐键盘满转
+    float max_wz         = 1.0f;     // 转向段原地转角速度 (rad/s)，对齐键盘满转
     float wall_height_m  = 0.40f;    // 高于此判墙（用户拍板）
     float pit_m          = -0.30f;   // 低于此判深坑
     float wall_cost      = 1000.0f;  // 撞墙，主导
@@ -42,7 +42,7 @@ struct Params {
     float out_cost       = 15.0f;    // 越出视场
     float step_cost      = 0.0f;     // 可爬台阶/高台：不惩罚（顶着走）；仅墙/坑/未知才绕
     float progress_w     = 40.0f;    // 每米朝航点进度
-    float steer_w        = 5.0f;     // 每 rad/s 转向惩罚（抑抖/抑绕圈）
+    float steer_w        = 5.0f;     // 每 rad 转向惩罚（抑抖/抑绕圈）
     float speed_w        = 1.5f;     // 每 m/s 偏离目标速度
     float blocked_thresh = 400.0f;   // 最佳代价仍高 -> vx=0 原地转
     float min_valid_ratio = 0.15f;   // 有效格占比过低 -> 降级
@@ -81,46 +81,49 @@ inline Result plan_local(const float* h_norm, const float* valid,
         }
     }
 
-    // (2) 候选集：vx 按目标速度分档，wz 固定 9 档
+    // (2) 候选集：vx 按目标速度分档，Δθ（原地转角）固定 9 档
     const float vx_nom[4]  = {0.0f, 0.2f, 0.45f, 0.7f};
     const float vx_maze[3] = {0.0f, 0.15f, 0.35f};
     const bool  maze = (target_vx < 0.45f);   // maze 段 target_vx=0.35
     const float* vx_cand = maze ? vx_maze : vx_nom;
     const int   n_vx = maze ? 3 : 4;
-    // wz 候选由 max_wz 生成：0 + 4 档正负比例，覆盖 [0, max_wz]（含满转）。
-    const float wz_frac[4] = {0.15f, 0.35f, 0.6f, 1.0f};
-    std::array<float, 9> wz_cand;
-    wz_cand[4] = 0.0f;
+    // Δθ 候选：原地转角，0 + 4 档正负比例，覆盖 [0, 1.0] rad（满转档）。
+    const float dth_frac[4] = {0.15f, 0.35f, 0.6f, 1.0f};
+    std::array<float, 9> dth_cand;
+    dth_cand[4] = 0.0f;
     for (int k = 0; k < 4; ++k) {
-        wz_cand[3 - k] = -p.max_wz * wz_frac[k];
-        wz_cand[5 + k] =  p.max_wz * wz_frac[k];
+        dth_cand[3 - k] = -dth_frac[k];
+        dth_cand[5 + k] =  dth_frac[k];
     }
-    const int   n_wz = 9;
+    const int   n_dth = 9;
 
     const float EPS = 1e-3f;
     const double cosY = std::cos(yaw), sinY = std::sin(yaw);
 
     double best_score = -1e30;
-    float  best_vx = 0.0f, best_wz = 0.0f, best_cost = 0.0f;
+    float  best_vx = 0.0f, best_dth = 0.0f, best_cost = 0.0f;
 
     for (int iv = 0; iv < n_vx; ++iv) {
         const float vx = vx_cand[iv];
-        for (int iw = 0; iw < n_wz; ++iw) {
-            const float wz = wz_cand[iw];
+        for (int id = 0; id < n_dth; ++id) {
+            const float dth = dth_cand[id];
 
-            // (3) 轨迹代价：车体系圆弧积分 + 前向探针
+            // (3) 轨迹代价：先原地转 Δθ、再沿新朝向直线（turn-then-go 两段式）+ 前向探针
+            const float t_turn = std::fabs(dth) / p.max_wz;   // 原地转向耗时
+            const float t_go   = std::max(0.0f, p.horizon_s - t_turn);
+            const float L      = vx * t_go;                   // 直线段距离
+            const float sgn    = (dth >= 0.0f) ? 1.0f : -1.0f;
+            const float cosD   = std::cos(dth), sinD = std::sin(dth);
+            const float xr_end = L * cosD, yr_end = L * sinD;
+
             float cost = 0.0f;
-            float xr_end = 0.0f, yr_end = 0.0f;
             for (float t = p.dt_s; t <= p.horizon_s + EPS; t += p.dt_s) {
-                const float th = wz * t;
-                float xr, yr;
-                if (std::fabs(wz) < EPS) { xr = vx * t; yr = 0.0f; }
-                else {
-                    xr = vx / wz * std::sin(wz * t);
-                    yr = vx / wz * (1.0f - std::cos(wz * t));
-                }
-                xr_end = xr; yr_end = yr;
-                for (float s : {0.3f, 0.5f, 0.7f, 1.0f}) {   // 前向探针：vx=0 原地转也能"看见"转向方向
+                // t < t_turn 原地转（位置原点，朝向扫 0→dth）；否则沿 dth 直线
+                const float tl = (t < t_turn) ? 0.0f : (t - t_turn);
+                const float th = (t < t_turn) ? (sgn * p.max_wz * t) : dth;
+                const float xr = vx * tl * std::cos(th);
+                const float yr = vx * tl * std::sin(th);
+                for (float s : {0.3f, 0.5f, 0.7f, 1.0f}) {   // 前向探针：原地转段也能"看见"扫向方向
                     const float px = xr + s * std::cos(th);
                     const float py = yr + s * std::sin(th);
                     const int ci = (int)std::floor((px - kXMinM) / kCellM);
@@ -139,7 +142,7 @@ inline Result plan_local(const float* h_norm, const float* valid,
                 }
             }
 
-            // (4) 航点进度：弧末端转世界系
+            // (4) 航点进度：直线段末端转世界系
             const double wx_end = x + xr_end * cosY - yr_end * sinY;
             const double wy_end = y + xr_end * sinY + yr_end * cosY;
             const double d0 = std::hypot(tx - x, ty - y);
@@ -149,12 +152,12 @@ inline Result plan_local(const float* h_norm, const float* valid,
             // (5) 得分：避障硬约束优先，progress/steer/speed 为软偏好
             const double score = -static_cast<double>(cost)
                                + p.progress_w * progress
-                               - p.steer_w * std::fabs(wz)
+                               - p.steer_w * std::fabs(dth)
                                - p.speed_w * std::fabs(vx - target_vx);
             if (score > best_score) {
                 best_score = score;
                 best_vx = vx;
-                best_wz = wz;
+                best_dth = dth;
                 best_cost = cost;
             }
         }
@@ -162,15 +165,16 @@ inline Result plan_local(const float* h_norm, const float* valid,
 
     // (6) 兜底
     Result r;
-    const bool dead_lock = (best_vx < EPS && std::fabs(best_wz) < EPS);
+    const bool dead_lock = (best_vx < EPS && std::fabs(best_dth) < EPS);
     if (best_cost > p.blocked_thresh || (dead_lock && target_vx > EPS)) {
         // 完全挡住，或「只有原地不动才安全」的原地死锁：交还几何命令，
         // 让机器人至少动起来，由几何 + teleport / wall_push 兜底。
         r.status = Status::kBlocked;
         return r;
     }
-    r.vx = best_vx;
-    r.wz = best_wz;
+    // 输出当前帧动作：有转角 -> 这一帧原地转（wz 满转）；无转角 -> 直线。
+    r.vx = (std::fabs(best_dth) < EPS) ? best_vx : 0.0f;
+    r.wz = (std::fabs(best_dth) < EPS) ? 0.0f : (best_dth > 0.0f ? p.max_wz : -p.max_wz);
     r.side = 0.0f;
     if (valid_count < p.min_valid_ratio * kNumCells) r.status = Status::kInactiveDegraded;
     else                                             r.status = Status::kActive;
