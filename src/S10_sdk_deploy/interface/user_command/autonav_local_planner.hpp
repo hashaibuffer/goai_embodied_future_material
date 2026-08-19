@@ -33,7 +33,7 @@ inline constexpr float kHeightDivisorM = 0.80f;   // 归一化除数，回乘得
 struct Params {
     float horizon_s      = 1.5f;     // 积分时长 (s)
     float dt_s           = 0.1f;     // 积分步长 (s) -> 15 点
-    float max_wz         = 0.9f;     // 转向候选上限 (rad/s)，键盘 1.0 留裕量
+    float max_wz         = 1.0f;     // 转向候选上限 (rad/s)，对齐键盘满转
     float wall_height_m  = 0.40f;    // 高于此判墙（用户拍板）
     float pit_m          = -0.30f;   // 低于此判深坑
     float wall_cost      = 1000.0f;  // 撞墙，主导
@@ -42,7 +42,7 @@ struct Params {
     float out_cost       = 15.0f;    // 越出视场
     float step_cost      = 0.0f;     // 可爬台阶/高台：不惩罚（顶着走）；仅墙/坑/未知才绕
     float progress_w     = 40.0f;    // 每米朝航点进度
-    float steer_w        = 2.0f;     // 每 rad/s 转向惩罚（抑抖）
+    float steer_w        = 5.0f;     // 每 rad/s 转向惩罚（抑抖/抑绕圈）
     float speed_w        = 1.5f;     // 每 m/s 偏离目标速度
     float blocked_thresh = 400.0f;   // 最佳代价仍高 -> vx=0 原地转
     float min_valid_ratio = 0.15f;   // 有效格占比过低 -> 降级
@@ -87,7 +87,14 @@ inline Result plan_local(const float* h_norm, const float* valid,
     const bool  maze = (target_vx < 0.45f);   // maze 段 target_vx=0.35
     const float* vx_cand = maze ? vx_maze : vx_nom;
     const int   n_vx = maze ? 3 : 4;
-    const float wz_cand[9] = {-0.9f, -0.6f, -0.35f, -0.15f, 0.0f, 0.15f, 0.35f, 0.6f, 0.9f};
+    // wz 候选由 max_wz 生成：0 + 4 档正负比例，覆盖 [0, max_wz]（含满转）。
+    const float wz_frac[4] = {0.15f, 0.35f, 0.6f, 1.0f};
+    std::array<float, 9> wz_cand;
+    wz_cand[4] = 0.0f;
+    for (int k = 0; k < 4; ++k) {
+        wz_cand[3 - k] = -p.max_wz * wz_frac[k];
+        wz_cand[5 + k] =  p.max_wz * wz_frac[k];
+    }
     const int   n_wz = 9;
 
     const float EPS = 1e-3f;
@@ -155,10 +162,10 @@ inline Result plan_local(const float* h_norm, const float* valid,
 
     // (6) 兜底
     Result r;
-    if (best_cost > p.blocked_thresh) {
-        // 完全挡住：所有候选代价都过高，找不到可走方向。
-        // 不回退成 (0,0,0) 原地死锁（best_wz 可能取 0），交给调用方回退几何命令，
-        // 让机器人至少动起来，由几何 + teleport 兜底。
+    const bool dead_lock = (best_vx < EPS && std::fabs(best_wz) < EPS);
+    if (best_cost > p.blocked_thresh || (dead_lock && target_vx > EPS)) {
+        // 完全挡住，或「只有原地不动才安全」的原地死锁：交还几何命令，
+        // 让机器人至少动起来，由几何 + teleport / wall_push 兜底。
         r.status = Status::kBlocked;
         return r;
     }

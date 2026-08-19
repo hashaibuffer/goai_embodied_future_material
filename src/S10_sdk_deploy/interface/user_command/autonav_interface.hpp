@@ -95,6 +95,10 @@ private:
     static constexpr double kTumbleRollPitchRad = 1.047;  // ~60 deg
     static constexpr double kOutOfBoundsMarginM = 2.0;
 
+    // Wall-push detection: 命令前进但实际位移远低于命令期望（单侧/正面抵墙持续怼墙）。
+    static constexpr double kWallPushMinExpectedM = 0.5;   // 命令期望位移低于此不判（排除起步/低速）
+    static constexpr double kWallPushMaxRatio = 0.25;      // 实际/期望位移 < 此判顶墙
+
     // Local planner (S3): 高度图避障。
     static constexpr float kPlannerStaleS = 0.5f;    // 高度图超过此时长 -> 过期，原样输出
     static constexpr float kDegradedMaxVx = 0.35f;   // 全无效图降级时减速上限
@@ -106,7 +110,7 @@ private:
 
     struct PoseSample
     {
-        double t, x, y;
+        double t, x, y, fwd;   // fwd = 该时刻最终命令前进速度（apply_local_plan 后）
     };
 
     std::atomic<bool> running_{false};
@@ -453,6 +457,34 @@ private:
         return displacement < kStallMinDisplacementM;
     }
 
+    // 检测「命令持续前进但实际位移速度远低于命令」——单侧/正面抵墙持续怼墙。
+    // 现有 detect_stall 固定 0.30m 阈值，顶墙打滑仍缓慢移动（位移>0.30m）时漏检；
+    // 这里改比例检测：窗口内实际位移 << 命令期望位移即判怼墙。
+    bool detect_wall_push(double& ratio)
+    {
+        ratio = 1.0;
+        if (stall_history_.size() < 2) return false;
+        double latest_t = stall_history_.back().t;
+        double window_start = latest_t - kStallWindowS;
+        while (!stall_history_.empty() && stall_history_.front().t < window_start)
+            stall_history_.pop_front();
+        if (stall_history_.size() < 2) return false;
+        if (stall_history_.back().t - stall_history_.front().t + 1e-9 < kStallWindowS)
+            return false;
+
+        // 命令期望位移 = Σ 梯形积分 fwd*dt
+        double expected = 0.0;
+        for (size_t i = 1; i < stall_history_.size(); ++i) {
+            double dt = stall_history_[i].t - stall_history_[i - 1].t;
+            expected += 0.5 * (stall_history_[i - 1].fwd + stall_history_[i].fwd) * dt;
+        }
+        if (expected < kWallPushMinExpectedM) return false;   // 命令没前进多远，不判
+        double actual = xy_dist(stall_history_.front().x, stall_history_.front().y,
+                                stall_history_.back().x, stall_history_.back().y);
+        ratio = actual / expected;
+        return ratio < kWallPushMaxRatio;
+    }
+
     bool detect_tumble(double roll, double pitch) const
     {
         return std::fabs(roll) > kTumbleRollPitchRad || std::fabs(pitch) > kTumbleRollPitchRad;
@@ -574,21 +606,25 @@ private:
                     usr_cmd_->side_vel_scale = side;
                     usr_cmd_->turnning_vel_scale = wz;
 
-                    stall_history_.push_back({t_s, x, y});
+                    stall_history_.push_back({t_s, x, y, fwd});
 
                     bool pure_yaw = (fwd == 0.0f && wz != 0.0f);
                     bool in_cooldown =
                         std::chrono::steady_clock::now() < teleport_cooldown_until_;
 
                     double disp = 0.0;
+                    double push_ratio = 1.0;
                     // Don't flag stall before the first waypoint is reached:
                     // startup re-orientation legitimately stays put.
                     bool stalled = reached_any_ && !pure_yaw && detect_stall(disp);
+                    bool wall_push = reached_any_ && detect_wall_push(push_ratio);
                     bool tumble = detect_tumble(roll, pitch);
                     bool oob = detect_out_of_bounds(x, y);
 
-                    if ((stalled || tumble || oob) && !in_cooldown) {
-                        std::string reason = tumble ? "tumble" : (oob ? "out_of_bounds" : "stall");
+                    if ((stalled || wall_push || tumble || oob) && !in_cooldown) {
+                        std::string reason = tumble ? "tumble"
+                                            : (oob ? "out_of_bounds"
+                                            : (wall_push ? "wall_push" : "stall"));
                         const bool finished =
                             next_idx_ < 0 || next_idx_ >= static_cast<int>(waypoints_.size());
                         if (mode_ == Mode::COLLECT) {
