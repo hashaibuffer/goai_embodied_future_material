@@ -19,8 +19,8 @@ terrain_command:
   unknown_risk_start: 0.35
   risk_deadband: 0.15
   minimum_speed_scale: 0.50
-  avoidance_gain: 1.20
-  maximum_avoidance_vy: 0.25
+  avoidance_gain: 0.60
+  maximum_avoidance_vy: 0.12
   slew_per_policy_step: [0.04, 0.03, 0.06]
 failure_codes:
   none: 0

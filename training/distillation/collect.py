@@ -51,6 +51,7 @@ def main():
 
     import rclpy
     from rclpy.executors import ExternalShutdownException
+    from rclpy._rclpy_pybind11 import RCLError
     from drdds.msg import AutoNavStatus, TeacherSample
     from rclpy.node import Node
 
@@ -88,6 +89,7 @@ def main():
             self.pending = deque()
             self.last_next_wp = -1
             self.post_teleport_until_ns = -1
+            self.suppress_next_advance_success = False
             self.create_subscription(TeacherSample, "/S10_TD_SAMPLE", self.sample_cb, 50)
             self.create_subscription(AutoNavStatus, "/S10_AUTONAV_STATUS", self.status_cb, 20)
 
@@ -99,19 +101,24 @@ def main():
                         record["failure_code"] = int(msg.failure_code)
                         record["contrast_label"] = 1
             if msg.teleported:
+                self.suppress_next_advance_success = True
                 self.post_teleport_until_ns = (
                     int(msg.timestamp_ns) + int(args.post_teleport_seconds * 1e9)
                 )
             # A checkpoint teleport places the robot directly on the next waypoint.
             # That recovery transition is never an authentic successful traversal.
-            if (not msg.teleported
-                    and self.last_next_wp >= 0
-                    and msg.next_waypoint_id > self.last_next_wp):
+            waypoint_advanced = (
+                self.last_next_wp >= 0
+                and msg.next_waypoint_id > self.last_next_wp
+            )
+            if waypoint_advanced and not self.suppress_next_advance_success:
                 for record in self.pending:
                     if (record["next_wp_id"] == self.last_next_wp
                             and not record["post_teleport"]):
                         record["success"] = True
                         record["contrast_label"] = 2
+            if waypoint_advanced:
+                self.suppress_next_advance_success = False
             self.last_next_wp = int(msg.next_waypoint_id)
             self.status = msg
 
@@ -169,7 +176,7 @@ def main():
     node = Collector()
     try:
         rclpy.spin(node)
-    except (KeyboardInterrupt, ExternalShutdownException):
+    except (KeyboardInterrupt, ExternalShutdownException, RCLError):
         pass
     finally:
         paths = node.close()
