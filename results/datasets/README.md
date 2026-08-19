@@ -10,7 +10,7 @@
 - `action_teacher [N,16]`：同一次官方 ONNX 推理的原始动作，也是实际控制标签。
 - `cmd_raw/cmd_terrain [N,3]`：用于审计地形改写是否生效。
 - `wp_id/episode_id/success/pre_failure/failure_code`：来自复用的 TA collect 链路。
-- `focus_segment`：该样本是否属于 TA `fail_segments.md` 指定的重点路段。
+- `focus_segment`：该样本是否属于 TA `fail_segments.md` 指定的重点路段。训练资格由 `(wp_id,next_wp_id)` 派生：16→17 与目标 28–32 交给 TH。
 - `post_teleport`：TA 使用原 checkpoint 传送后的 5 秒正常续跑样本。
 - `contrast_label`：0 普通、1 失败前、2 同路段成功对照。
 
@@ -29,6 +29,6 @@ python3 training/distillation/validate_dataset.py results/datasets/<file>.npz
 python3 training/distillation/dataset_coverage.py results/datasets/*.npz
 ```
 
-该命令直接读取 `results/fail_segments.md`。任何重点 waypoint 缺少失败前样本或成功对照时返回非零状态，TD 不得标记为 `done`。
+该命令读取 `results/fail_segments.md` 并按路段验收：全路线 0–32 必须有覆盖；16→17 与目标 28–32 只要求覆盖并交接 TH；其余失败段必须同时具有失败前样本和未经传送的官方教师成功对照。TD 数据的 `teacher_source` 必须全部为 official。
 
 检查器使用 `np.load(..., allow_pickle=False)`，可在 Windows 和 Jazzy 机器运行。

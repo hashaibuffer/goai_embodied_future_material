@@ -2,6 +2,7 @@
 
 - **Status:** doing
 - **Depends on:** TA AutoNav collect、TB `/S10_HEIGHTMAP`、TC 冻结策略合约
+- **Scope:** 全路线 0–32 均采集；TD 仅使用官方 ONNX + `cmd_terrain`。路段 16→17 与目标 waypoint 28–32 标记为 TH privileged teacher 交接范围
 
 ## 数据因果关系
 
@@ -58,8 +59,8 @@ TD 只扩展 TA 的状态发布；卡死、翻滚、越界、传送和 checkpoin
 
 ## 尚未完成的实采验收
 
-- 跑完全图并覆盖 `results/fail_segments.md` 中的主要失败 waypoint。
-- 为主要失败段采集同位置成功对照。
-- 汇总平地、危险地形、迷宫和传送后续段的数据量与成功率。
+- 跑完全路线 0–32；16→17 与目标 28–32 必须有覆盖和 TH 交接记录，不强制 TD 官方教师成功。
+- 对其余 `results/fail_segments.md` 路段采集未经传送的官方教师成功对照。
+- 汇总平地、缓坡、规则减速、困难路段覆盖和传送后续段；困难路段的学习成功标签由 TH 提供。
 
 完成这些长时间实采项目后，才能把 TD 状态从 `doing` 更新为 `done`。

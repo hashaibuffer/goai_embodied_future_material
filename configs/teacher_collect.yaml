@@ -3,6 +3,9 @@ topics:
   sample: /S10_TD_SAMPLE
   autonav_status: /S10_AUTONAV_STATUS
 collection:
+  # All waypoints are route-covered. TH owns learned-success labels for these segments.
+  privileged_segments: [[16, 17]]
+  privileged_target_waypoints: [28, 29, 30, 31, 32]
   rate_hz: 50
   pre_failure_seconds: 5.0
   focus_window_seconds: 10.0

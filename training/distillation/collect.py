@@ -75,6 +75,8 @@ def main():
             "yaw_rad": float(os.environ.get("S10_START_JITTER_YAW", "0")),
         },
         "focus_waypoints": list(focus_ids),
+        "privileged_segments": [[16, 17]],
+        "privileged_target_waypoints": [28, 29, 30, 31, 32],
         "fail_segments_sha256": sha256(args.fail_segments),
         "focus_window_seconds": args.focus_window_seconds,
         "pre_failure_seconds": args.pre_failure_seconds,

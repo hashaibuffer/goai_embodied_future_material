@@ -8,14 +8,20 @@ from pathlib import Path
 
 import numpy as np
 
-from focus_segments import load_fail_segments
+from focus_segments import (
+    PRIVILEGED_TARGET_WAYPOINTS, ROUTE_TARGET_WAYPOINTS,
+    load_fail_segments, official_focus_waypoints,
+)
 from schema import validate_dataset
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def audit_coverage(paths, focus_ids):
-    focus_ids = tuple(sorted(set(int(value) for value in focus_ids)))
+def audit_coverage(paths, focus_ids, require_full_route=True):
+    all_fail_ids = tuple(sorted(set(int(value) for value in focus_ids)))
+    focus_ids = official_focus_waypoints(all_fail_ids)
+    observed_route_targets = set()
+    privileged_samples = {target: 0 for target in sorted(PRIVILEGED_TARGET_WAYPOINTS | {17})}
     per_waypoint = {
         wp: {"samples": 0, "pre_failure": 0, "success": 0} for wp in focus_ids
     }
@@ -27,10 +33,21 @@ def audit_coverage(paths, focus_ids):
         "post_teleport": 0,
     }
     command_contract_ok = True
+    official_teacher_only = True
     for path in paths:
         validate_dataset(path)
         with np.load(path, allow_pickle=False) as data:
             count = len(data["timestamp_ns"])
+            official_teacher_only &= bool(np.all(data["teacher_source"] == 0))
+            observed_route_targets.update(
+                int(value) for value in np.unique(data["next_wp_id"])
+                if int(value) in ROUTE_TARGET_WAYPOINTS
+            )
+            for target in privileged_samples:
+                selected_privileged = data["next_wp_id"] == target
+                if target == 17:
+                    selected_privileged &= data["wp_id"] == 16
+                privileged_samples[target] += int(np.count_nonzero(selected_privileged))
             totals["samples"] += count
             risk = data["risk_features"][:, 7]
             valid = data["heightmap_valid"]
@@ -55,6 +72,10 @@ def audit_coverage(paths, focus_ids):
                     & ~data["post_teleport"]
                 )
                 per_waypoint[wp]["success"] += int(np.count_nonzero(authentic_success))
+    missing_route_targets = sorted(ROUTE_TARGET_WAYPOINTS - observed_route_targets)
+    missing_privileged_coverage = [
+        target for target, count in privileged_samples.items() if count == 0
+    ]
     missing_samples = [wp for wp, value in per_waypoint.items() if value["samples"] == 0]
     missing_failure = [wp for wp, value in per_waypoint.items() if value["pre_failure"] == 0]
     missing_success = [wp for wp, value in per_waypoint.items() if value["success"] == 0]
@@ -63,6 +84,9 @@ def audit_coverage(paths, focus_ids):
         and totals["danger"] > 0
         and totals["rewritten"] > 0
         and command_contract_ok
+        and official_teacher_only
+        and (not require_full_route or not missing_route_targets)
+        and (not require_full_route or not missing_privileged_coverage)
         and not missing_samples
         and not missing_failure
         and not missing_success
@@ -70,8 +94,16 @@ def audit_coverage(paths, focus_ids):
     return {
         "complete": complete,
         "command_contract_ok": command_contract_ok,
+        "official_teacher_only": official_teacher_only,
+        "require_full_route": require_full_route,
         "totals": totals,
-        "focus_waypoints": list(focus_ids),
+        "all_fail_waypoints": list(all_fail_ids),
+        "official_focus_waypoints": list(focus_ids),
+        "privileged_segments": [[16, 17]],
+        "privileged_target_waypoints": sorted(PRIVILEGED_TARGET_WAYPOINTS),
+        "privileged_coverage_samples": {str(k): v for k, v in privileged_samples.items()},
+        "missing_route_targets": missing_route_targets,
+        "missing_privileged_coverage": missing_privileged_coverage,
         "per_waypoint": {str(key): value for key, value in per_waypoint.items()},
         "missing_samples": missing_samples,
         "missing_failure": missing_failure,

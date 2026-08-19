@@ -12,7 +12,9 @@ sys.path.insert(0, str(ROOT / "training/distillation"))
 from schema import ChunkedDatasetWriter, validate_dataset  # noqa: E402
 from terrain_command import rewrite_command  # noqa: E402
 from dataset_coverage import audit_coverage  # noqa: E402
-from focus_segments import load_fail_segments  # noqa: E402
+from focus_segments import (  # noqa: E402
+    load_fail_segments, official_focus_waypoints, requires_privileged,
+)
 
 
 def full_valid_flat():
@@ -100,8 +102,16 @@ def test_npz_is_pickle_free_and_cross_platform_readable(tmp_path):
 
 def test_ta_fail_segments_are_real_input_and_deduplicated(tmp_path):
     handoff = tmp_path / "fail_segments.md"
-    handoff.write_text("wp~=6, stall\nwp~=1, tumble\nwp~=6, stall\n")
-    assert load_fail_segments(handoff) == (1, 6)
+    handoff.write_text("wp~=6, stall\nwp~=1, tumble\nwp~=6, stall\nwp~=28, stall\n")
+    assert load_fail_segments(handoff) == (1, 6, 28)
+
+
+def test_difficult_segments_are_handed_to_privileged_teacher():
+    assert requires_privileged(16, 17)
+    assert requires_privileged(27, 28)
+    assert requires_privileged(31, 32)
+    assert not requires_privileged(15, 16)
+    assert official_focus_waypoints([6, 16, 27, 28, 31, 32]) == (6,)
 
 
 def test_coverage_requires_flat_danger_failure_and_success_control(tmp_path):
@@ -110,7 +120,7 @@ def test_coverage_requires_flat_danger_failure_and_success_control(tmp_path):
     writer.append(make_record(success=True, danger=False))
     writer.append(make_record(success=False, pre_failure=True, danger=True))
     writer.close()
-    report = audit_coverage([output], [0])
+    report = audit_coverage([output], [0], require_full_route=False)
     assert report["complete"] is True
     assert report["per_waypoint"]["0"] == {
         "samples": 2, "pre_failure": 1, "success": 1,
@@ -122,7 +132,7 @@ def test_coverage_rejects_missing_success_control(tmp_path):
     writer = ChunkedDatasetWriter(output, {"git_commit": "abc"}, chunk_size=10)
     writer.append(make_record(success=False, pre_failure=True, danger=True))
     writer.close()
-    report = audit_coverage([output], [0])
+    report = audit_coverage([output], [0], require_full_route=False)
     assert report["complete"] is False
     assert report["missing_success"] == [0]
 
