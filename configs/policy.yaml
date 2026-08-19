@@ -1,0 +1,116 @@
+# Frozen by T00. Changing obs_dim, slice order, scales, or joint order
+# invalidates every dataset and ONNX. Numbers below are copied from
+# S10PolicyRunner / RLControlState; do not "simplify" them.
+
+topics:
+  pose: /S10_BASE_POSE
+  lidar: /S10_SIM_LIDAR
+  heightmap: /S10_HEIGHTMAP
+  nav_cmd: /S10_NAV_CMD
+
+command:
+  vx: [-1.0, 1.0]
+  vy: [-0.6, 0.6]
+  wz: [-1.0, 1.0]
+  # Student observation must use the unrewritten waypoint command.
+  student_command: cmd_raw
+
+policy:
+  proprio_dim: 57
+  heightmap_dim: 384
+  obs_dim: 441
+  action_dim: 16
+  control_dt_s: 0.005
+  decimation: 4
+  policy_dt_s: 0.02
+
+  # Official runner applies these before the ONNX, not inside the net.
+  omega_scale: 0.25
+  dof_vel_scale: 0.05
+  gravity_world: [0.0, 0.0, -1.0]
+  # /IMU_DATA roll/pitch/yaw are degrees; omega_* are already rad/s.
+  imu_rpy_in_ros: degrees
+  imu_rpy_in_policy: radians
+  imu_omega_in_ros: radians_per_second
+
+  obs_layout:
+    - {name: base_omega, dim: 3}            # scaled: omega_body * omega_scale
+    - {name: projected_gravity, dim: 3}     # R_world_from_body^{-1} * gravity_world
+    - {name: cmd_raw, dim: 3}               # unclipped-then-clipped vx, vy, wz
+    - {name: joint_pos, dim: 16}            # policy_order, wheels zero, minus default_pose_policy
+    - {name: joint_vel, dim: 16}            # policy_order * dof_vel_scale
+    - {name: last_action, dim: 16}          # previous ONNX a_norm, not scaled joints
+    - {name: height_normalized, dim: 192}   # 16x12 C-order
+    - {name: validity_mask, dim: 192}       # 16x12 C-order
+
+  obs_slices:
+    base_omega: [0, 3]
+    projected_gravity: [3, 6]
+    cmd_raw: [6, 9]
+    joint_pos: [9, 25]
+    joint_vel: [25, 41]
+    last_action: [41, 57]
+    height_normalized: [57, 249]
+    validity_mask: [249, 441]
+    proprio: [0, 57]
+    heightmap: [57, 441]
+
+  # Canonical names match s10_policy_runner.hpp.
+  robot_order:
+    - fl_hipx_joint
+    - fl_hipy_joint
+    - fl_knee_joint
+    - fl_wheel_joint
+    - fr_hipx_joint
+    - fr_hipy_joint
+    - fr_knee_joint
+    - fr_wheel_joint
+    - hl_hipx_joint
+    - hl_hipy_joint
+    - hl_knee_joint
+    - hl_wheel_joint
+    - hr_hipx_joint
+    - hr_hipy_joint
+    - hr_knee_joint
+    - hr_wheel_joint
+
+  policy_order:
+    - fl_hipx_joint
+    - fl_hipy_joint
+    - fl_knee_joint
+    - fr_hipx_joint
+    - fr_hipy_joint
+    - fr_knee_joint
+    - hl_hipx_joint
+    - hl_hipy_joint
+    - hl_knee_joint
+    - hr_hipx_joint
+    - hr_hipy_joint
+    - hr_knee_joint
+    - fl_wheel_joint
+    - fr_wheel_joint
+    - hl_wheel_joint
+    - hr_wheel_joint
+
+  # robot2policy[i] = robot_order index of policy_order[i]
+  robot2policy_idx: [0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, 3, 7, 11, 15]
+  # policy2robot[i] = policy_order index of robot_order[i]
+  policy2robot_idx: [0, 1, 2, 12, 3, 4, 5, 13, 6, 7, 8, 14, 9, 10, 11, 15]
+
+  default_pose_policy: [0.0, -0.3, 0.6, 0.0, -0.3, 0.6, 0.0, 0.3, -0.6, 0.0, 0.3, -0.6, 0.0, 0.0, 0.0, 0.0]
+  default_pose_robot: [0.0, -0.3, 0.6, 0.0, 0.0, -0.3, 0.6, 0.0, 0.0, 0.3, -0.6, 0.0, 0.0, 0.3, -0.6, 0.0]
+
+  # Applied in robot_order after permuting a_norm out of policy_order.
+  action_scale_robot: [0.125, 0.25, 0.25, 5.0, 0.125, 0.25, 0.25, 5.0, 0.125, 0.25, 0.25, 5.0, 0.125, 0.25, 0.25, 5.0]
+  kp_robot: [80.0, 80.0, 80.0, 0.0, 80.0, 80.0, 80.0, 0.0, 80.0, 80.0, 80.0, 0.0, 80.0, 80.0, 80.0, 0.0]
+  kd_robot: [2.0, 2.0, 2.0, 0.6, 2.0, 2.0, 2.0, 0.6, 2.0, 2.0, 2.0, 0.6, 2.0, 2.0, 2.0, 0.6]
+
+  onnx:
+    input_name: obs
+    output_name: actions
+    input_shape: [1, 441]
+    output_shape: [1, 16]
+    opset: 17
+    default_model: models/terrain_locomotion.onnx
+    # Official path is a compile-time constant; TC must override it.
+    official_model_do_not_submit: policy/policy.onnx

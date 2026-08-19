@@ -1,0 +1,93 @@
+# Frozen by T00. Changing waypoint count, reach radius, or command limits
+# requires a full-team ack. Command limits must stay identical to policy.yaml.
+
+topics:
+  pose: /S10_BASE_POSE
+  nav_cmd: /S10_NAV_CMD
+
+# Official KeyboardInterface ranges. Values enter the 57-D command slot unscaled.
+command:
+  vx: [-1.0, 1.0]
+  vy: [-0.6, 0.6]
+  wz: [-1.0, 1.0]
+
+track:
+  waypoint_count: 33
+  first_id: 0
+  last_id: 32
+  reach_radius_m: 0.20
+  distance_mode: xy
+  body_name: base_link
+  overlay_geom_group: 2
+
+start:
+  base_pos_xyz: [0.0, -2.5, 0.2]
+  base_quat_wxyz: [1.0, 0.0, 0.0, 0.0]
+  heading_axis: +X
+  # WP0 is at +Y relative to the start pose; AutoNav must yaw before driving.
+  waypoint0_xyz: [0.0, -1.725, 0.0]
+  # StandUpState only accepts `c` after 2 * stand_duration_ (2.0 s).
+  min_stand_wait_s: 4.0
+
+lookahead:
+  switch_distance_straight_m: 1.60
+  switch_distance_turn_m: 0.80
+  switch_distance_maze_m: 0.45
+  weight: 0.35
+  # Do not look past these ids or the timer start/stop can miss the 0.2 m disk.
+  no_cross_ids: [0, 32]
+
+speed:
+  nominal_vx: 0.70
+  maze_vx: 0.35
+  maze_waypoint_ids: [28, 29, 30, 31, 32]
+
+# TA navigation control law. Not frozen; may be tuned without a full-team ack.
+control:
+  yaw_gain: 2.0              # wz = clip(yaw_gain * heading_error)
+  yaw_threshold_rad: 0.35    # pure-yaw startup when |heading_error| exceeds this
+  turn_angle_threshold_rad: 0.785  # segment bend > ~45deg is treated as a "turn"
+
+# TA stall / failure detection. Drives the collect-mode teleport + metadata.
+stall:
+  window_s: 5.0              # sliding window for displacement
+  min_displacement_m: 0.30   # below this displacement in window -> stall
+  tumble_roll_pitch_rad: 1.047  # |roll| or |pitch| above ~60deg -> tumble
+  out_of_bounds_margin_m: 2.0
+
+# Positions copied from track_overlay.xml geom pos. TA must parse the XML at
+# runtime as well; this list is the unit-test fixture, not a second source of truth.
+waypoints:
+  - {id: 0, xyz: [0.0000, -1.7250, 0.0000], kind: start}
+  - {id: 1, xyz: [-0.7125, 11.6550, 0.4750], kind: waypoint}
+  - {id: 2, xyz: [-8.7300, 11.8425, 0.4750], kind: waypoint}
+  - {id: 3, xyz: [-10.5375, 16.3275, 0.4750], kind: waypoint}
+  - {id: 4, xyz: [-15.0225, 17.3700, 0.4750], kind: waypoint}
+  - {id: 5, xyz: [-15.6000, 23.2800, 0.4750], kind: waypoint}
+  - {id: 6, xyz: [-15.1200, 31.8600, 0.6000], kind: waypoint}
+  - {id: 7, xyz: [-14.9325, 41.2050, 1.1650], kind: waypoint}
+  - {id: 8, xyz: [-20.4600, 43.1100, 1.1650], kind: waypoint}
+  - {id: 9, xyz: [-20.6550, 47.7825, 1.1650], kind: waypoint}
+  - {id: 10, xyz: [-4.0500, 47.9700, 1.1650], kind: waypoint}
+  - {id: 11, xyz: [-4.2450, 42.5400, 1.1650], kind: waypoint}
+  - {id: 12, xyz: [-13.5000, 41.5500, 1.1650], kind: waypoint}
+  - {id: 13, xyz: [-12.9225, 34.6275, 0.4750], kind: waypoint}
+  - {id: 14, xyz: [2.7225, 34.5300, 0.4750], kind: waypoint}
+  - {id: 15, xyz: [11.1225, 33.0075, 0.1000], kind: waypoint}
+  - {id: 16, xyz: [16.2750, 31.2900, 0.4750], kind: waypoint}
+  - {id: 17, xyz: [17.6100, 29.1900, 0.4750], kind: waypoint}
+  - {id: 18, xyz: [25.7175, 29.9550, 2.2000], kind: waypoint}
+  - {id: 19, xyz: [34.5975, 29.9550, 2.3600], kind: waypoint}
+  - {id: 20, xyz: [33.9225, 24.4275, 2.3600], kind: waypoint}
+  - {id: 21, xyz: [17.8950, 24.6150, 0.4750], kind: waypoint}
+  - {id: 22, xyz: [19.0425, 16.8000, 0.4750], kind: waypoint}
+  - {id: 23, xyz: [26.4825, 17.1825, 1.6700], kind: waypoint}
+  - {id: 24, xyz: [31.6350, 15.4650, 1.6700], kind: waypoint}
+  - {id: 25, xyz: [33.1650, 15.1800, 1.6700], kind: waypoint}
+  - {id: 26, xyz: [33.6000, 21.3750, 2.7000], kind: waypoint}
+  - {id: 27, xyz: [34.8825, 21.3750, 2.7000], kind: waypoint}
+  - {id: 28, xyz: [35.0700, 15.6600, 3.7500], kind: maze}
+  - {id: 29, xyz: [30.9350, 14.7150, 3.7500], kind: maze}
+  - {id: 30, xyz: [29.5350, 16.3275, 3.7500], kind: maze}
+  - {id: 31, xyz: [29.9175, 20.6175, 3.7500], kind: maze}
+  - {id: 32, xyz: [32.9250, 18.4500, 3.7500], kind: end}

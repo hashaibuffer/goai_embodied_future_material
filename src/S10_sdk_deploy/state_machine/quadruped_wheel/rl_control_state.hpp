@@ -11,7 +11,7 @@
 #pragma once
 #include "state_base.h"
 #include "policy_runner_base.hpp"
-#include "s10_policy_runner.hpp"
+#include "terrain_policy_runner.hpp"
 #include "robot_interface.h"
 #include "user_command_interface.h"
 #include "json.hpp"
@@ -24,13 +24,13 @@ namespace qw {
         std::atomic<int> rbs_write_index_{0};
         int getrbsReadIndex() const { return 1 - rbs_write_index_.load(std::memory_order_acquire); }
 
-        int state_run_cnt_;
+        std::atomic<int> state_run_cnt_{-1};
 
         std::shared_ptr<PolicyRunnerBase> policy_ptr_;
-        std::shared_ptr<S10PolicyRunner> s10_policy_;
+        std::shared_ptr<TerrainPolicyRunner> terrain_policy_;
 
         std::thread run_policy_thread_;
-        bool start_flag_ = true;
+        std::atomic<bool> start_flag_{true};
 
         float policy_cost_time_ = 1;
 
@@ -59,8 +59,9 @@ namespace qw {
 
         void PolicyRunner() {
             int run_cnt_record = -1;
-            while (start_flag_) {
-                if (state_run_cnt_ % policy_ptr_->decimation_ == 0 && state_run_cnt_ != run_cnt_record) {
+            while (start_flag_.load(std::memory_order_acquire)) {
+                const int state_run_cnt = state_run_cnt_.load(std::memory_order_acquire);
+                if (state_run_cnt % policy_ptr_->decimation_ == 0 && state_run_cnt != run_cnt_record) {
                     timespec start_timestamp, end_timestamp;
                     clock_gettime(CLOCK_MONOTONIC, &start_timestamp);
                     auto ra = policy_ptr_->getRobotAction(rbs_[getrbsReadIndex()], *(uc_ptr_->GetUserCommand()));
@@ -68,7 +69,7 @@ namespace qw {
                     MatXf res = ra.ConvertToMat();
 
                     ri_ptr_->SetJointCommand(res);
-                    run_cnt_record = state_run_cnt_;
+                    run_cnt_record = state_run_cnt;
                     clock_gettime(CLOCK_MONOTONIC, &end_timestamp);
                     policy_cost_time_ = (end_timestamp.tv_sec - start_timestamp.tv_sec) * 1e3
                                         + (end_timestamp.tv_nsec - start_timestamp.tv_nsec) / 1e6;
@@ -79,16 +80,18 @@ namespace qw {
         }
 
     public:
-        RLControlState(const RobotName &robot_name, const std::string &state_name,
-                       std::shared_ptr<ControllerData> data_ptr) : StateBase(robot_name, state_name, data_ptr) {
+        RLControlState(
+            const RobotName &robot_name,
+            const std::string &state_name,
+            std::shared_ptr<ControllerData> data_ptr,
+            TerrainPolicyRunner::Controller controller,
+            const std::string& model_path) : StateBase(robot_name, state_name, data_ptr) {
             if (robot_name_ == RobotName::S10) {
-                namespace fs = std::filesystem;
-                fs::path base = fs::path(__FILE__).parent_path();
-                auto model_path = fs::canonical(base / ".." / ".." / "policy" / "policy.onnx");
-                s10_policy_ = std::make_shared<S10PolicyRunner>("s10_policy", model_path.string());
+                terrain_policy_ = std::make_shared<TerrainPolicyRunner>(
+                    model_path, controller, ri_ptr_->get_node());
             }
 
-            policy_ptr_ = s10_policy_;
+            policy_ptr_ = terrain_policy_;
             if (!policy_ptr_) {
                 std::cerr << "error policy" << std::endl;
                 exit(0);
@@ -99,22 +102,22 @@ namespace qw {
         ~RLControlState() {}
 
         virtual void OnEnter() {
-            state_run_cnt_ = -1;
-            start_flag_ = true;
-            run_policy_thread_ = std::thread(std::bind(&RLControlState::PolicyRunner, this));
+            state_run_cnt_.store(-1, std::memory_order_release);
+            start_flag_.store(true, std::memory_order_release);
             policy_ptr_->OnEnter();
+            run_policy_thread_ = std::thread(std::bind(&RLControlState::PolicyRunner, this));
             StateBase::msfb_.UpdateCurrentState(RobotMotionState::RLControlMode);
         };
 
         virtual void OnExit() {
-            start_flag_ = false;
+            start_flag_.store(false, std::memory_order_release);
             run_policy_thread_.join();
-            state_run_cnt_ = -1;
+            state_run_cnt_.store(-1, std::memory_order_release);
         }
 
         virtual void Run() {
             UpdateRobotObservation();
-            state_run_cnt_++;
+            state_run_cnt_.fetch_add(1, std::memory_order_release);
         }
 
         virtual bool LoseControlJudge() {
