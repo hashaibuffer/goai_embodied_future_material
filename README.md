@@ -27,9 +27,9 @@ Participants are expected to train their own policy with perception. This policy
 
 For simulation, participants are not required to build a SLAM algorithm. You may directly use the ground truth robot position from MuJoCo. Navigation is optional; if you implement navigation, the final elapsed time will be divided by `1.2` for scoring.
 
-## Privileged teacher dataset collection
+## 特权教师数据采集
 
-After freezing an Isaac Lab teacher, collect distillation labels entirely in headless MuJoCo by following [the D_priv handoff manual](doc/MUJOCO_D_PRIV_COLLECTION.md). The collector supports Jazzy 5080, MuJoCo-only ThinkPad Jazzy, and Windows 11; it does not require ROS, Isaac Lab, CUDA, or a viewer.
+Isaac Lab 教师冻结后，按照 [D_priv 采集交接手册](doc/MUJOCO_D_PRIV_COLLECTION.md)，在无头 MuJoCo 中完成蒸馏标签采集。采集器支持 Jazzy 5080、只有 MuJoCo 环境的 ThinkPad Jazzy 和 Windows 11；不需要 ROS、Isaac Lab、CUDA 或图形界面。
 
 ## Setup
 
