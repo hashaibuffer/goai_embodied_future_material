@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 
 from schema import ChunkedDatasetWriter
+from focus_segments import load_fail_segments
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -26,20 +27,38 @@ def git_commit():
         ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
 
 
+def git_worktree_metadata():
+    status = subprocess.check_output(
+        ["git", "status", "--porcelain"], cwd=ROOT, text=True)
+    difference = subprocess.check_output(
+        ["git", "diff", "--binary", "HEAD"], cwd=ROOT)
+    return bool(status.strip()), hashlib.sha256(difference).hexdigest()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--chunk-size", type=int, default=5000)
     parser.add_argument("--pre-failure-seconds", type=float, default=5.0)
+    parser.add_argument("--focus-window-seconds", type=float, default=10.0)
+    parser.add_argument("--post-teleport-seconds", type=float, default=5.0)
+    parser.add_argument(
+        "--fail-segments",
+        default=str(ROOT / "results/fail_segments.md"),
+    )
     args = parser.parse_args()
 
     import rclpy
     from drdds.msg import AutoNavStatus, TeacherSample
     from rclpy.node import Node
 
+    focus_ids = load_fail_segments(args.fail_segments)
+    git_dirty, git_diff_sha256 = git_worktree_metadata()
     metadata = {
         "git_commit": git_commit(),
+        "git_dirty": git_dirty,
+        "git_diff_sha256": git_diff_sha256,
         "seed": args.seed,
         "teacher_source_codes": {"official": 0, "privileged": 1},
         "failure_codes": {"none": 0, "stall": 1, "tumble": 2, "out_of_bounds": 3},
@@ -52,6 +71,11 @@ def main():
             "y_m": float(os.environ.get("S10_START_JITTER_Y", "0")),
             "yaw_rad": float(os.environ.get("S10_START_JITTER_YAW", "0")),
         },
+        "focus_waypoints": list(focus_ids),
+        "fail_segments_sha256": sha256(args.fail_segments),
+        "focus_window_seconds": args.focus_window_seconds,
+        "pre_failure_seconds": args.pre_failure_seconds,
+        "post_teleport_seconds": args.post_teleport_seconds,
     }
     writer = ChunkedDatasetWriter(args.output, metadata, args.chunk_size)
 
@@ -61,18 +85,27 @@ def main():
             self.status = None
             self.pending = deque()
             self.last_next_wp = -1
+            self.post_teleport_until_ns = -1
             self.create_subscription(TeacherSample, "/S10_TD_SAMPLE", self.sample_cb, 50)
             self.create_subscription(AutoNavStatus, "/S10_AUTONAV_STATUS", self.status_cb, 20)
 
         def status_cb(self, msg):
             if msg.failure_code:
                 for record in self.pending:
-                    record["pre_failure"] = True
-                    record["failure_code"] = int(msg.failure_code)
+                    if record["wp_id"] == msg.waypoint_id:
+                        record["pre_failure"] = True
+                        record["failure_code"] = int(msg.failure_code)
+                        record["contrast_label"] = 1
+            if msg.teleported:
+                self.post_teleport_until_ns = (
+                    int(msg.timestamp_ns) + int(args.post_teleport_seconds * 1e9)
+                )
             if self.last_next_wp >= 0 and msg.next_waypoint_id > self.last_next_wp:
                 for record in self.pending:
-                    if record["next_wp_id"] == self.last_next_wp:
+                    if (record["next_wp_id"] == self.last_next_wp
+                            and not record["post_teleport"]):
                         record["success"] = True
+                        record["contrast_label"] = 2
             self.last_next_wp = int(msg.next_waypoint_id)
             self.status = msg
 
@@ -105,12 +138,20 @@ def main():
                 "failure_code": 0,
                 "success": False,
                 "pre_failure": False,
+                "focus_segment": int(wp_id) in focus_ids,
+                "post_teleport": msg.timestamp_ns <= self.post_teleport_until_ns,
+                "contrast_label": 0,
                 "heightmap_valid": msg.heightmap_valid,
                 "heightmap_age_ms": msg.heightmap_age_ms,
             }
             self.pending.append(record)
-            cutoff = msg.timestamp_ns - int(args.pre_failure_seconds * 1e9)
-            while self.pending and self.pending[0]["timestamp_ns"] < cutoff:
+            while self.pending:
+                oldest = self.pending[0]
+                window = (args.focus_window_seconds if oldest["focus_segment"]
+                          else args.pre_failure_seconds)
+                cutoff = msg.timestamp_ns - int(window * 1e9)
+                if oldest["timestamp_ns"] >= cutoff:
+                    break
                 writer.append(self.pending.popleft())
 
         def close(self):

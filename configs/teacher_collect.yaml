@@ -5,6 +5,8 @@ topics:
 collection:
   rate_hz: 50
   pre_failure_seconds: 5.0
+  focus_window_seconds: 10.0
+  post_teleport_seconds: 5.0
   chunk_size: 5000
   teacher_source: official
   initial_pose_jitter_m: 0.03
@@ -27,3 +29,7 @@ failure_codes:
 teacher_source_codes:
   official: 0
   privileged: 1
+contrast_codes:
+  normal: 0
+  failure_approach: 1
+  success_control: 2

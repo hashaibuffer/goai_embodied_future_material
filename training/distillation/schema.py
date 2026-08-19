@@ -28,6 +28,9 @@ SCALAR_FIELDS = {
     "failure_code": np.uint8,
     "success": np.bool_,
     "pre_failure": np.bool_,
+    "focus_segment": np.bool_,
+    "post_teleport": np.bool_,
+    "contrast_label": np.uint8,
     "heightmap_valid": np.bool_,
     "heightmap_age_ms": np.float32,
 }

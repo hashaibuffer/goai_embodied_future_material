@@ -11,6 +11,8 @@ sys.path.insert(0, str(ROOT / "training/distillation"))
 
 from schema import ChunkedDatasetWriter, validate_dataset  # noqa: E402
 from terrain_command import rewrite_command  # noqa: E402
+from dataset_coverage import audit_coverage  # noqa: E402
+from focus_segments import load_fail_segments  # noqa: E402
 
 
 def full_valid_flat():
@@ -46,13 +48,17 @@ def test_unknown_heightmap_is_conservative_and_finite():
     assert np.isfinite(command).all()
 
 
-def make_record():
+def make_record(*, success=True, pre_failure=False, danger=False):
     raw = np.asarray([0.7, 0.0, 0.0], dtype=np.float32)
     terrain = np.asarray([0.6, 0.0, 0.0], dtype=np.float32)
     student = np.zeros(441, dtype=np.float32)
     teacher = np.zeros(57, dtype=np.float32)
     student[6:9] = raw
     teacher[6:9] = terrain
+    risk = np.zeros(8, dtype=np.float32)
+    if danger:
+        risk[0] = 0.4
+        risk[7] = 1.0
     return {
         "obs_student": student,
         "obs_teacher": teacher,
@@ -60,7 +66,7 @@ def make_record():
         "action_teacher": np.zeros(16, dtype=np.float32),
         "cmd_raw": raw,
         "cmd_terrain": terrain,
-        "risk_features": np.zeros(8, dtype=np.float32),
+        "risk_features": risk,
         "pose": np.asarray([0, 0, 0.2, 0, 0, 0, 1], dtype=np.float32),
         "timestamp_ns": 1,
         "sequence": 0,
@@ -69,8 +75,11 @@ def make_record():
         "next_wp_id": 1,
         "teacher_source": 0,
         "failure_code": 0,
-        "success": True,
-        "pre_failure": False,
+        "success": success,
+        "pre_failure": pre_failure,
+        "focus_segment": True,
+        "post_teleport": False,
+        "contrast_label": 2 if success else (1 if pre_failure else 0),
         "heightmap_valid": True,
         "heightmap_age_ms": 10.0,
     }
@@ -87,6 +96,35 @@ def test_npz_is_pickle_free_and_cross_platform_readable(tmp_path):
         assert data["obs_student"].shape == (1, 441)
         assert data["action_teacher"].shape == (1, 16)
         assert not any(data[name].dtype.hasobject for name in data.files)
+
+
+def test_ta_fail_segments_are_real_input_and_deduplicated():
+    assert load_fail_segments(ROOT / "results/fail_segments.md") == (
+        0, 1, 6, 15, 22, 23, 27, 28, 29, 30,
+    )
+
+
+def test_coverage_requires_flat_danger_failure_and_success_control(tmp_path):
+    output = tmp_path / "focus.npz"
+    writer = ChunkedDatasetWriter(output, {"git_commit": "abc"}, chunk_size=10)
+    writer.append(make_record(success=True, danger=False))
+    writer.append(make_record(success=False, pre_failure=True, danger=True))
+    writer.close()
+    report = audit_coverage([output], [0])
+    assert report["complete"] is True
+    assert report["per_waypoint"]["0"] == {
+        "samples": 2, "pre_failure": 1, "success": 1,
+    }
+
+
+def test_coverage_rejects_missing_success_control(tmp_path):
+    output = tmp_path / "failure_only.npz"
+    writer = ChunkedDatasetWriter(output, {"git_commit": "abc"}, chunk_size=10)
+    writer.append(make_record(success=False, pre_failure=True, danger=True))
+    writer.close()
+    report = audit_coverage([output], [0])
+    assert report["complete"] is False
+    assert report["missing_success"] == [0]
 
 
 def test_cpp_terrain_command_contract_executes(tmp_path):
@@ -115,6 +153,11 @@ def test_autonav_is_reused_for_status_and_failure_labels():
     assert '"/S10_AUTONAV_STATUS"' in source
     assert "detect_stall" in source and "request_teleport" in source
     assert "publish_status(teleported, failure_code(reason))" in source
+
+
+def test_teleport_assisted_waypoint_is_not_a_success_control():
+    source = (ROOT / "training/distillation/collect.py").read_text()
+    assert 'and not record["post_teleport"]' in source
 
 
 def test_simulator_supports_seeded_initial_pose_jitter():
