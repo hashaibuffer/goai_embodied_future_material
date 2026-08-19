@@ -70,11 +70,12 @@ struct TerrainCommandMath {
             Clamp(raw[0], -1.0F, 1.0F),
             Clamp(raw[1], -0.6F, 0.6F),
             Clamp(raw[2], -1.0F, 1.0F)};
-        const float speed_scale = 1.0F - 0.75F * risk_score;
+        const float active_risk = Clamp((risk_score - 0.15F) / 0.85F, 0.0F, 1.0F);
+        const float speed_scale = 1.0F - 0.50F * active_risk;
         target[0] *= speed_scale;
         const float avoidance = Clamp((right - left) * 1.2F, -0.25F, 0.25F);
         target[1] = Clamp(target[1] + avoidance, -0.6F, 0.6F);
-        target[2] *= 1.0F - 0.35F * risk_score;
+        target[2] *= 1.0F - 0.35F * active_risk;
 
         Result result;
         result.command = {

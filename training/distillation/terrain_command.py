@@ -55,10 +55,11 @@ def rewrite_command(cmd_raw, heightmap, previous=(0.0, 0.0, 0.0)):
     ), 0.0, 1.0))
 
     target = np.clip(raw, [-1.0, -0.6, -1.0], [1.0, 0.6, 1.0]).astype(np.float32)
-    target[0] *= np.float32(1.0 - 0.75 * risk_score)
+    active_risk = float(np.clip((risk_score - 0.15) / 0.85, 0.0, 1.0))
+    target[0] *= np.float32(1.0 - 0.50 * active_risk)
     target[1] = np.clip(target[1] + np.clip(
         (right - left) * 1.2, -0.25, 0.25), -0.6, 0.6)
-    target[2] *= np.float32(1.0 - 0.35 * risk_score)
+    target[2] *= np.float32(1.0 - 0.35 * active_risk)
     command = _slew(previous, target).astype(np.float32)
     risk = np.asarray([
         max_step, max_drop, slope, left, right,

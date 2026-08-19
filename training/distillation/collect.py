@@ -65,6 +65,7 @@ def main():
         "failure_codes": {"none": 0, "stall": 1, "tumble": 2, "out_of_bounds": 3},
         "policy_config_sha256": sha256(ROOT / "configs/policy.yaml"),
         "heightmap_config_sha256": sha256(ROOT / "configs/heightmap.yaml"),
+        "lidar_config_sha256": sha256(ROOT / "configs/lidar.yaml"),
         "teacher_collect_config_sha256": sha256(ROOT / "configs/teacher_collect.yaml"),
         "official_policy_sha256": sha256(ROOT / "src/S10_sdk_deploy/policy/policy.onnx"),
         "initial_pose_jitter": {
