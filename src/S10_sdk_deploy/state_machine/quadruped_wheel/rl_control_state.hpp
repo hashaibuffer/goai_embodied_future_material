@@ -12,6 +12,7 @@
 #include "state_base.h"
 #include "policy_runner_base.hpp"
 #include "terrain_policy_runner.hpp"
+#include "teacher_collect_runner.hpp"
 #include "robot_interface.h"
 #include "user_command_interface.h"
 #include "json.hpp"
@@ -28,6 +29,7 @@ namespace qw {
 
         std::shared_ptr<PolicyRunnerBase> policy_ptr_;
         std::shared_ptr<TerrainPolicyRunner> terrain_policy_;
+        std::shared_ptr<TeacherCollectRunner> teacher_collect_policy_;
 
         std::thread run_policy_thread_;
         std::atomic<bool> start_flag_{true};
@@ -85,13 +87,22 @@ namespace qw {
             const std::string &state_name,
             std::shared_ptr<ControllerData> data_ptr,
             TerrainPolicyRunner::Controller controller,
-            const std::string& model_path) : StateBase(robot_name, state_name, data_ptr) {
+            const std::string& model_path,
+            bool teacher_collect,
+            const std::string& teacher_model_path) : StateBase(robot_name, state_name, data_ptr) {
             if (robot_name_ == RobotName::S10) {
-                terrain_policy_ = std::make_shared<TerrainPolicyRunner>(
-                    model_path, controller, ri_ptr_->get_node());
+                if (teacher_collect) {
+                    teacher_collect_policy_ = std::make_shared<TeacherCollectRunner>(
+                        teacher_model_path, ri_ptr_->get_node());
+                } else {
+                    terrain_policy_ = std::make_shared<TerrainPolicyRunner>(
+                        model_path, controller, ri_ptr_->get_node());
+                }
             }
 
-            policy_ptr_ = terrain_policy_;
+            policy_ptr_ = teacher_collect ?
+                std::static_pointer_cast<PolicyRunnerBase>(teacher_collect_policy_) :
+                std::static_pointer_cast<PolicyRunnerBase>(terrain_policy_);
             if (!policy_ptr_) {
                 std::cerr << "error policy" << std::endl;
                 exit(0);
@@ -99,7 +110,10 @@ namespace qw {
             policy_ptr_->DisplayPolicyInfo();
         }
 
-        ~RLControlState() {}
+        ~RLControlState() {
+            start_flag_.store(false, std::memory_order_release);
+            if (run_policy_thread_.joinable()) run_policy_thread_.join();
+        }
 
         virtual void OnEnter() {
             state_run_cnt_.store(-1, std::memory_order_release);
@@ -111,7 +125,7 @@ namespace qw {
 
         virtual void OnExit() {
             start_flag_.store(false, std::memory_order_release);
-            run_policy_thread_.join();
+            if (run_policy_thread_.joinable()) run_policy_thread_.join();
             state_run_cnt_.store(-1, std::memory_order_release);
         }
 

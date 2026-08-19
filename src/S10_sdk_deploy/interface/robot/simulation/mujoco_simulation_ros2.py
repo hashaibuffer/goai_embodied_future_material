@@ -183,8 +183,13 @@ class MuJoCoSimulationNode(Node):
         """关节位置设置为与 PyBullet 脚本一致的初始角度"""
         qpos0 = self.data.qpos.copy()
         qpos0[7:7 + self.dof_num] = JOINT_INIT[key]  # ,3-6 basequat，0-2 basepos
-        qpos0[:3] = TRACK_START_BASE_POS
-        qpos0[3:7] = np.array([1, 0, 0, 0])
+        jitter_x = float(os.environ.get("S10_START_JITTER_X", "0"))
+        jitter_y = float(os.environ.get("S10_START_JITTER_Y", "0"))
+        jitter_yaw = float(os.environ.get("S10_START_JITTER_YAW", "0"))
+        qpos0[:3] = TRACK_START_BASE_POS + np.array([jitter_x, jitter_y, 0.0])
+        qpos0[3:7] = np.array([
+            np.cos(jitter_yaw / 2.0), 0.0, 0.0, np.sin(jitter_yaw / 2.0)
+        ])
         self.data.qpos[:] = qpos0
         mujoco.mj_forward(self.model, self.data)
 

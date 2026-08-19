@@ -18,19 +18,26 @@ namespace {
 struct CliOptions {
     std::string controller = "learned";
     std::string model_path = S10_TERRAIN_DEFAULT_MODEL;
+    bool teacher_collect = false;
+    std::string teacher_model_path = S10_OFFICIAL_TEACHER_MODEL;
 };
 
 CliOptions ParseArgs(int argc, char** argv) {
     CliOptions options;
     for (int i = 1; i < argc; ++i) {
         const std::string arg(argv[i]);
-        if ((arg == "--controller" || arg == "--model-path") && i + 1 >= argc) {
+        if ((arg == "--controller" || arg == "--model-path" ||
+             arg == "--teacher-model-path") && i + 1 >= argc) {
             throw std::invalid_argument("missing value after " + arg);
         }
         if (arg == "--controller") {
             options.controller = argv[++i];
         } else if (arg == "--model-path") {
             options.model_path = argv[++i];
+        } else if (arg == "--teacher-collect") {
+            options.teacher_collect = true;
+        } else if (arg == "--teacher-model-path") {
+            options.teacher_model_path = argv[++i];
         } else if (arg == "--ros-args") {
             break;
         } else if (arg.rfind("__", 0) == 0) {
@@ -61,7 +68,9 @@ int main(int argc, char** argv){
         RobotName::S10,
         RemoteCommandType::kAutoNav,
         TerrainPolicyRunner::ParseController(options.controller),
-        options.model_path);
+        options.model_path,
+        options.teacher_collect,
+        options.teacher_model_path);
     // KeyBoard control (fallback)
     // std::shared_ptr<StateMachineBase> fsm = std::make_shared<qw::QwStateMachine>(
     //     RobotName::S10, RemoteCommandType::kKeyBoard,

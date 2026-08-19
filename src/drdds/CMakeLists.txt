@@ -23,10 +23,12 @@ find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(geometry_msgs REQUIRED)
 
-file(GLOB_RECURSE MSG_FILES RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/msg" "msg/*.msg")
+file(GLOB_RECURSE MSG_FILES CONFIGURE_DEPENDS
+  RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/msg" "msg/*.msg")
 list(TRANSFORM MSG_FILES PREPEND "msg/")
 
-file(GLOB_RECURSE SRV_FILES RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/srv" "srv/*.srv")
+file(GLOB_RECURSE SRV_FILES CONFIGURE_DEPENDS
+  RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/srv" "srv/*.srv")
 list(TRANSFORM SRV_FILES PREPEND "srv/")
 
 rosidl_generate_interfaces(${PROJECT_NAME}
@@ -37,4 +39,3 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 
 ament_export_dependencies(rosidl_default_runtime)
 ament_package()
-
