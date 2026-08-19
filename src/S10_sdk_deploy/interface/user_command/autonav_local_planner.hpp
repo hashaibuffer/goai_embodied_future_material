@@ -35,6 +35,7 @@ struct Params {
     float dt_s           = 0.1f;     // 积分步长 (s) -> 15 点
     float max_wz         = 1.0f;     // 转向段原地转角速度 (rad/s)，对齐键盘满转
     float wall_height_m  = 0.40f;    // 高于此判墙（用户拍板）
+    float half_width_m   = 0.20f;    // 半车宽（轮外沿±0.20m），横向探针偏移
     float pit_m          = -0.30f;   // 低于此判深坑
     float wall_cost      = 1000.0f;  // 撞墙，主导
     float pit_cost       = 60.0f;    // 冲下平台
@@ -123,20 +124,23 @@ inline Result plan_local(const float* h_norm, const float* valid,
                 const float th = (t < t_turn) ? (sgn * p.max_wz * t) : dth;
                 const float xr = vx * tl * std::cos(th);
                 const float yr = vx * tl * std::sin(th);
+                const float cosT = std::cos(th), sinT = std::sin(th);
                 for (float s : {0.3f, 0.5f, 0.7f, 1.0f}) {   // 前向探针：原地转段也能"看见"扫向方向
-                    const float px = xr + s * std::cos(th);
-                    const float py = yr + s * std::sin(th);
-                    const int ci = (int)std::floor((px - kXMinM) / kCellM);
-                    const int cj = (int)std::floor((py - kYMinM) / kCellM);
-                    if (ci < 0 || ci >= kPolicyNx || cj < 0 || cj >= kPolicyNy) {
-                        cost += p.out_cost;
-                    } else {
-                        switch (cls[ci * kPolicyNy + cj]) {
-                            case CellClass::kBlock:   cost += p.wall_cost;    break;
-                            case CellClass::kPit:     cost += p.pit_cost;     break;
-                            case CellClass::kUnknown: cost += p.unknown_cost; break;
-                            case CellClass::kStep:    cost += p.step_cost;    break;
-                            default: break;   // kFree 0
+                    for (float lat : {-p.half_width_m, 0.0f, p.half_width_m}) {   // 横向：右/中/左（车宽覆盖）
+                        const float px = xr + s * cosT - lat * sinT;
+                        const float py = yr + s * sinT + lat * cosT;
+                        const int ci = (int)std::floor((px - kXMinM) / kCellM);
+                        const int cj = (int)std::floor((py - kYMinM) / kCellM);
+                        if (ci < 0 || ci >= kPolicyNx || cj < 0 || cj >= kPolicyNy) {
+                            cost += p.out_cost;
+                        } else {
+                            switch (cls[ci * kPolicyNy + cj]) {
+                                case CellClass::kBlock:   cost += p.wall_cost;    break;
+                                case CellClass::kPit:     cost += p.pit_cost;     break;
+                                case CellClass::kUnknown: cost += p.unknown_cost; break;
+                                case CellClass::kStep:    cost += p.step_cost;    break;
+                                default: break;   // kFree 0
+                            }
                         }
                     }
                 }
