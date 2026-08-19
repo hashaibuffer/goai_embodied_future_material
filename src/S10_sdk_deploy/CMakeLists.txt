@@ -27,6 +27,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(drdds REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 
 set(THIRD_PARTY ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 
@@ -68,6 +69,7 @@ ament_target_dependencies(rl_deploy
   rclcpp
   drdds
   geometry_msgs
+  std_msgs
 )
 if(BUILD_PLATFORM STREQUAL "arm")
   target_link_libraries(rl_deploy
