@@ -49,7 +49,7 @@ struct Params {
 };
 
 enum class CellClass : uint8_t { kFree, kBlock, kStep, kPit, kUnknown, kOut };
-enum class Status   : uint8_t { kInactiveDegraded, kActive };
+enum class Status   : uint8_t { kInactiveDegraded, kActive, kBlocked };
 
 struct Result {
     float vx   = 0.0f;
@@ -155,8 +155,14 @@ inline Result plan_local(const float* h_norm, const float* valid,
 
     // (6) 兜底
     Result r;
-    if (best_cost > p.blocked_thresh) r.vx = 0.0f;   // 完全挡住 -> 原地转（方向=best_wz）
-    else                              r.vx = best_vx;
+    if (best_cost > p.blocked_thresh) {
+        // 完全挡住：所有候选代价都过高，找不到可走方向。
+        // 不回退成 (0,0,0) 原地死锁（best_wz 可能取 0），交给调用方回退几何命令，
+        // 让机器人至少动起来，由几何 + teleport 兜底。
+        r.status = Status::kBlocked;
+        return r;
+    }
+    r.vx = best_vx;
     r.wz = best_wz;
     r.side = 0.0f;
     if (valid_count < p.min_valid_ratio * kNumCells) r.status = Status::kInactiveDegraded;

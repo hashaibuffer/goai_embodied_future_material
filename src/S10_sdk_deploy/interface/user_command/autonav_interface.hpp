@@ -405,6 +405,8 @@ private:
             fwd  = r.vx;
             side = r.side;   // 恒 0
             wz   = r.wz;
+        } else if (r.status == autonav_local_plan::Status::kBlocked) {
+            return;   // 完全挡住：回退几何命令，避免 (0,0,0) 原地死锁
         } else {
             fwd = std::min(fwd, kDegradedMaxVx);   // 未知图 -> 只减速，不改方向
         }
