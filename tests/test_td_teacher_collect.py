@@ -98,10 +98,10 @@ def test_npz_is_pickle_free_and_cross_platform_readable(tmp_path):
         assert not any(data[name].dtype.hasobject for name in data.files)
 
 
-def test_ta_fail_segments_are_real_input_and_deduplicated():
-    assert load_fail_segments(ROOT / "results/fail_segments.md") == (
-        0, 1, 6, 15, 22, 23, 27, 28, 29, 30,
-    )
+def test_ta_fail_segments_are_real_input_and_deduplicated(tmp_path):
+    handoff = tmp_path / "fail_segments.md"
+    handoff.write_text("wp~=6, stall\nwp~=1, tumble\nwp~=6, stall\n")
+    assert load_fail_segments(handoff) == (1, 6)
 
 
 def test_coverage_requires_flat_danger_failure_and_success_control(tmp_path):

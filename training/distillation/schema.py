@@ -111,6 +111,8 @@ def validate_dataset(path):
                 raise ValueError(f"wrong shape for {name}: {data[name].shape}")
         if not np.isfinite(data["obs_student"]).all() or not np.isfinite(data["action_teacher"]).all():
             raise ValueError("dataset contains non-finite values")
+        if np.any(data["success"] & data["pre_failure"]):
+            raise ValueError("success and pre_failure labels must be mutually exclusive")
         metadata = json.loads(str(data["metadata_json"]))
         if metadata.get("schema_version") != SCHEMA_VERSION:
             raise ValueError("unsupported schema version")

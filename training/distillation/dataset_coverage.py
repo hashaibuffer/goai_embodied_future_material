@@ -48,8 +48,13 @@ def audit_coverage(paths, focus_ids):
                 per_waypoint[wp]["samples"] += int(np.count_nonzero(selected))
                 per_waypoint[wp]["pre_failure"] += int(np.count_nonzero(
                     selected & data["pre_failure"]))
-                per_waypoint[wp]["success"] += int(np.count_nonzero(
-                    selected & data["success"]))
+                authentic_success = (
+                    selected
+                    & data["success"]
+                    & ~data["pre_failure"]
+                    & ~data["post_teleport"]
+                )
+                per_waypoint[wp]["success"] += int(np.count_nonzero(authentic_success))
     missing_samples = [wp for wp, value in per_waypoint.items() if value["samples"] == 0]
     missing_failure = [wp for wp, value in per_waypoint.items() if value["pre_failure"] == 0]
     missing_success = [wp for wp, value in per_waypoint.items() if value["success"] == 0]

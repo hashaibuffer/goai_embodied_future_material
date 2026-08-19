@@ -50,6 +50,7 @@ def main():
     args = parser.parse_args()
 
     import rclpy
+    from rclpy.executors import ExternalShutdownException
     from drdds.msg import AutoNavStatus, TeacherSample
     from rclpy.node import Node
 
@@ -100,7 +101,11 @@ def main():
                 self.post_teleport_until_ns = (
                     int(msg.timestamp_ns) + int(args.post_teleport_seconds * 1e9)
                 )
-            if self.last_next_wp >= 0 and msg.next_waypoint_id > self.last_next_wp:
+            # A checkpoint teleport places the robot directly on the next waypoint.
+            # That recovery transition is never an authentic successful traversal.
+            if (not msg.teleported
+                    and self.last_next_wp >= 0
+                    and msg.next_waypoint_id > self.last_next_wp):
                 for record in self.pending:
                     if (record["next_wp_id"] == self.last_next_wp
                             and not record["post_teleport"]):
@@ -163,7 +168,7 @@ def main():
     node = Collector()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         paths = node.close()
