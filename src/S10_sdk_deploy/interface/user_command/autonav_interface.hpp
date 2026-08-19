@@ -28,11 +28,14 @@
 
 #include "user_command_interface.h"
 #include "custom_types.h"
+#include "autonav_local_planner.hpp"
 
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
+#include <std_msgs/msg/float32_multi_array.hpp>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -43,6 +46,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -91,6 +95,10 @@ private:
     static constexpr double kTumbleRollPitchRad = 1.047;  // ~60 deg
     static constexpr double kOutOfBoundsMarginM = 2.0;
 
+    // Local planner (S3): 高度图避障。
+    static constexpr float kPlannerStaleS = 0.5f;    // 高度图超过此时长 -> 过期，原样输出
+    static constexpr float kDegradedMaxVx = 0.35f;   // 全无效图降级时减速上限
+
     struct Waypoint
     {
         double x, y, z;
@@ -112,6 +120,15 @@ private:
     double pose_x_ = 0.0, pose_y_ = 0.0, pose_z_ = 0.0;
     double pose_qx_ = 0.0, pose_qy_ = 0.0, pose_qz_ = 0.0, pose_qw_ = 1.0;
     double pose_stamp_s_ = 0.0;
+
+    // Local planner (S3): LiDAR 高度图缓冲（384 = 192 高度 + 192 validity）。
+    rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr heightmap_sub_;
+    std::mutex hm_mutex_;
+    std::array<float, autonav_local_plan::kNumCells> hm_heights_{};
+    std::array<float, autonav_local_plan::kNumCells> hm_validity_{};
+    bool hm_valid_ = false;
+    std::chrono::steady_clock::time_point hm_received_{};
+    autonav_local_plan::Params planner_params_;
 
     Mode mode_ = Mode::EVAL;
     std::string results_dir_ = "results";
@@ -257,6 +274,20 @@ private:
         has_pose_ = true;
     }
 
+    void heightmap_callback(const std_msgs::msg::Float32MultiArray::SharedPtr msg)
+    {
+        if (msg->layout.dim.size() < 3) return;              // 无 layout -> 丢弃
+        if (msg->layout.dim[0].size != 2) return;            // channels != 2 -> 丢弃
+        if (msg->data.size() < 2 * autonav_local_plan::kNumCells) return;  // 不足 384 -> 丢弃
+        std::lock_guard<std::mutex> lock(hm_mutex_);
+        for (int k = 0; k < autonav_local_plan::kNumCells; ++k) {
+            hm_heights_[k]  = msg->data[k];                                  // 前 192 = 高度
+            hm_validity_[k] = msg->data[autonav_local_plan::kNumCells + k];  // 后 192 = validity
+        }
+        hm_valid_ = true;
+        hm_received_ = std::chrono::steady_clock::now();
+    }
+
     static double xy_dist(double ax, double ay, double bx, double by)
     {
         return std::hypot(ax - bx, ay - by);
@@ -345,6 +376,37 @@ private:
         } else {
             fwd = clip(static_cast<float>(target_vx(kind)), -kMaxForward, kMaxForward);
             yaw_cmd = clip(static_cast<float>(kYawGain * heading_error), -kMaxYaw, kMaxYaw);
+        }
+    }
+
+    // 在几何命令之后对速度三轴做避障改写；无图/过期/越界 -> 原样返回。
+    void apply_local_plan(double x, double y, double yaw, float& fwd, float& side, float& wz)
+    {
+        if (next_idx_ < 0 || next_idx_ >= static_cast<int>(waypoints_.size())) return;
+
+        std::array<float, autonav_local_plan::kNumCells> heights, validity;
+        {
+            std::lock_guard<std::mutex> lock(hm_mutex_);
+            if (!hm_valid_) return;                                   // 无图 -> 几何原样
+            double age = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - hm_received_).count();
+            if (age > kPlannerStaleS) return;                          // 过期 -> 几何原样
+            heights  = hm_heights_;
+            validity = hm_validity_;
+        }
+
+        const Waypoint& wp = waypoints_[next_idx_];
+        double tvx = target_vx(segment_kind(next_idx_));
+        auto r = autonav_local_plan::plan_local(
+            heights.data(), validity.data(), planner_params_,
+            x, y, yaw, wp.x, wp.y, tvx);
+
+        if (r.status == autonav_local_plan::Status::kActive) {
+            fwd  = r.vx;
+            side = r.side;   // 恒 0
+            wz   = r.wz;
+        } else {
+            fwd = std::min(fwd, kDegradedMaxVx);   // 未知图 -> 只减速，不改方向
         }
     }
 
@@ -505,6 +567,7 @@ private:
 
                     float fwd = 0.0f, side = 0.0f, wz = 0.0f;
                     compute_command(x, y, yaw, fwd, side, wz);
+                    apply_local_plan(x, y, yaw, fwd, side, wz);
                     usr_cmd_->forward_vel_scale = fwd;
                     usr_cmd_->side_vel_scale = side;
                     usr_cmd_->turnning_vel_scale = wz;
@@ -619,6 +682,11 @@ public:
             [this](const geometry_msgs::msg::PoseStamped::SharedPtr msg) { pose_callback(msg); });
         teleport_pub_ = node_->create_publisher<geometry_msgs::msg::PoseStamped>(
             "/S10_TELEPORT", 10);
+        heightmap_sub_ = node_->create_subscription<std_msgs::msg::Float32MultiArray>(
+            "/S10_HEIGHTMAP", 10,
+            [this](const std_msgs::msg::Float32MultiArray::SharedPtr msg) {
+                heightmap_callback(msg);
+            });
 
         running_ = true;
         nav_thread_ = std::thread(&AutoNavCommandInterface::nav_loop, this);
