@@ -56,7 +56,8 @@ def rewrite_command(cmd_raw, heightmap, previous=(0.0, 0.0, 0.0)):
 
     target = np.clip(raw, [-1.0, -0.6, -1.0], [1.0, 0.6, 1.0]).astype(np.float32)
     active_risk = float(np.clip((risk_score - 0.15) / 0.85, 0.0, 1.0))
-    target[0] *= np.float32(1.0 - 0.50 * active_risk)
+    speed_scale = np.float32(1.20 - 0.70 * active_risk)
+    target[0] = np.clip(target[0] * speed_scale, -1.0, 1.0)
     target[1] = np.clip(target[1] + np.clip(
         (right - left) * 0.6, -0.12, 0.12), -0.6, 0.6)
     target[2] *= np.float32(1.0 - 0.35 * active_risk)

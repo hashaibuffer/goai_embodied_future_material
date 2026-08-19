@@ -21,6 +21,7 @@ terrain_command:
   slope_threshold_m: 0.20
   unknown_risk_start: 0.35
   risk_deadband: 0.15
+  flat_speed_scale: 1.20
   minimum_speed_scale: 0.50
   avoidance_gain: 0.60
   maximum_avoidance_vy: 0.12

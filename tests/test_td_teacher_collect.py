@@ -30,6 +30,14 @@ def test_flat_ground_preserves_command_after_smoother_is_settled():
     assert risk[7] == 0.0
 
 
+def test_clear_ground_can_accelerate_smoothly_within_official_limit():
+    raw = np.asarray([0.7, 0.0, 0.0], dtype=np.float32)
+    settled = np.asarray([0.84, 0.0, 0.0], dtype=np.float32)
+    command, risk = rewrite_command(raw, full_valid_flat(), settled)
+    np.testing.assert_allclose(command, settled, atol=1e-6)
+    assert risk[7] == 0.0 and command[0] <= 1.0
+
+
 def test_step_slows_and_left_obstacle_steers_right_with_slew_limit():
     grid = full_valid_flat()
     grid[0, 8, 7] = 0.5  # 0.4m obstacle in the left half
