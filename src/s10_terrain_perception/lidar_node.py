@@ -28,6 +28,7 @@ from geometry_msgs.msg import PoseStamped
 from scipy.spatial.transform import Rotation
 
 from heightmap import HEIGHTMAP_DEFAULTS, build_heightmap, load_config as load_heightmap_config
+from mujoco_lidar import MujocoLidarScanner
 
 BASE_DIR = Path(__file__).resolve().parent
 WS_ROOT = BASE_DIR.parent.parent        # 本文件在 workspace_root/src/s10_terrain_perception/，上两级 = 根
@@ -174,25 +175,13 @@ class LidarNode(Node):
         self.data = mujoco.MjData(self.model)
         mujoco.mj_forward(self.model, self.data)
 
-        self.site_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_SITE, self.cfg["site_name"])
-        self.base_body = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, self.cfg["body_exclude"])
-        if self.site_id < 0:
-            raise RuntimeError(f"site '{self.cfg['site_name']}' 不在模型中")
-        self.site_offset = self.model.site_pos[self.site_id].copy()   # 局部坐标 (m)
-
-        # 预生成 fan 局部方向（雷达局部系：+x 为前方）
-        az = np.linspace(self.cfg["azimuth_deg"][0], self.cfg["azimuth_deg"][1],
-                         int(self.cfg["azimuth_beams"])) * np.pi / 180.0
-        el = np.linspace(self.cfg["elevation_deg"][0], self.cfg["elevation_deg"][1],
-                         int(self.cfg["elevation_beams"])) * np.pi / 180.0
-        fan = [[np.cos(e) * np.cos(a), np.cos(e) * np.sin(a), np.sin(e)]
-               for e in el for a in az]
-        self.fan = np.asarray(fan, dtype=np.float64)          # (N,3)
-        self.nray = len(self.fan)
-        self.geomgroup = np.asarray(self.cfg["geomgroup"], dtype=np.uint8)
-        self.range_min = float(self.cfg.get("range_min", 0.0))       # 盲区 (m)
-        self.noise_std = float(self.cfg.get("range_noise_std_m", 0.0))
-        self.dropout = float(self.cfg.get("dropout_probability", 0.0))
+        self.scanner = MujocoLidarScanner(self.model, self.cfg)
+        self.site_id = self.scanner.site_id
+        self.base_body = self.scanner.body_exclude
+        self.site_offset = self.scanner.site_offset
+        self.fan = self.scanner.fan
+        self.nray = self.scanner.nray
+        self.geomgroup = self.scanner.geomgroup
 
         self.pc_pub = self.create_publisher(PointCloud2, self.cfg["pointcloud_topic"], 10)
         # ---- T4 高度图（yaw-only 水平系，只发布 policy 到 /S10_HEIGHTMAP）----
@@ -262,51 +251,26 @@ class LidarNode(Node):
         pos = np.array([pose.pose.position.x, pose.pose.position.y, pose.pose.position.z])
         R = self._pose_to_rotmat(pose)
 
-        pnt = pos + R @ self.site_offset
-        vec_world = (R @ self.fan.T).T                        # (N,3)
-        dist = np.full(self.nray, -1.0, dtype=np.float64)
-        geomid = np.full(self.nray, -1, dtype=np.int32)
-
         t0 = time.perf_counter()
-        mujoco.mj_multiRay(
-            self.model, self.data, pnt, vec_world.reshape(-1),
-            self.geomgroup, bool(self.cfg["flg_static"]), self.base_body,
-            geomid, dist, None, self.nray, float(self.cfg["cutoff"]),
-        )
-
-        hit = geomid >= 0
-        # 注意：mj_multiRay 的 cutoff 参数对地形 mesh（static mesh）不裁剪（已实测），
-        # 必须显式按量程过滤，否则 0°~-5° 近水平行会拖出几十米远点
-        hit &= dist <= float(self.cfg["cutoff"])
-        if self.range_min > 0:
-            hit &= dist >= self.range_min            # 盲区过滤（官方 range_min 0.10m）
-        n_hit = int(hit.sum())
+        scan = self.scanner.scan(self.data, pos, R, apply_noise=True)
         scan_ms = (time.perf_counter() - t0) * 1000.0
+        points = scan.points_w
+        n_hit = scan.raw_hit_count
 
-        if n_hit:
-            points = pnt[None, :] + vec_world[hit] * dist[hit, None]   # 世界坐标
-            # 测距噪声（沿射线方向抖动）+ 随机丢点（模拟真机）
-            if self.noise_std > 0:
-                points = points + vec_world[hit] * np.random.normal(
-                    0, self.noise_std, size=(n_hit, 1))
-            if self.dropout > 0:
-                points = points[np.random.random(n_hit) >= self.dropout]
-            if len(points):
-                # T4 高度图：与 points 同帧、锁外计算（yaw-only 水平系聚合，<1ms）
-                grid_policy = build_heightmap(points, pos, R, self.hm_cfg)   # (2, nx, ny)
-                done_t = time.monotonic()
-                with self._lock:                 # 锁内只做引用交换 + 统计（RMW 需锁）
-                    self._frame_seq += 1
-                    self._latest_frame = ScanFrame(
-                        self._frame_seq, pose.header.stamp, points, n_hit,
-                        scan_ms, done_t, pos.copy(), R.copy(),
-                        grid_policy)
-                    self._st["scan_count"] += 1
-                    self._st["scan_ms_sum"] += scan_ms
-                    if scan_ms > self._st["scan_ms_max"]:
-                        self._st["scan_ms_max"] = scan_ms
+        if len(points):
+            grid_policy = build_heightmap(points, pos, R, self.hm_cfg)
+            done_t = time.monotonic()
+            with self._lock:
+                self._frame_seq += 1
+                self._latest_frame = ScanFrame(
+                    self._frame_seq, pose.header.stamp, points, n_hit,
+                    scan_ms, done_t, pos.copy(), R.copy(), grid_policy)
+                self._st["scan_count"] += 1
+                self._st["scan_ms_sum"] += scan_ms
+                if scan_ms > self._st["scan_ms_max"]:
+                    self._st["scan_ms_max"] = scan_ms
 
-        self._log_scan_stats_if_due(n_hit, geomid[hit])
+        self._log_scan_stats_if_due(n_hit, scan.geom_ids)
 
     def _log_scan_stats_if_due(self, n_hit, hit_geomids):
         """防御日志（scan 线程，锁外）：命中数 + group 分布，每 log_interval_s 一行。"""
