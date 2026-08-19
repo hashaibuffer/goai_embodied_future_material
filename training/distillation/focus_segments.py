@@ -6,7 +6,19 @@ import re
 from pathlib import Path
 
 FAIL_SEGMENT_RE = re.compile(r"\bwp\s*~=\s*(\d+)\b")
-PRIVILEGED_SEGMENTS = frozenset({(16, 17)})
+# Discrete stair/descent and wall-maze segments are TH's privileged-teacher
+# scope. TD retains route coverage there, but does not require official
+# success labels the blind policy cannot reliably provide.
+PRIVILEGED_SEGMENTS = frozenset({
+    (6, 7),    # stepped section confirmed by elevation profile
+    (15, 16),  # stepped section confirmed by elevation profile
+    (16, 17),  # high-step hand-off
+    (17, 18),  # climb A
+    (20, 21),  # stepped descent
+    (22, 23),  # climb B / Issue #5 high-stair regression
+    (23, 24),  # stepped continuation confirmed by elevation profile
+    (27, 28),  # climb C entrance
+})
 PRIVILEGED_TARGET_WAYPOINTS = frozenset(range(28, 33))
 ROUTE_TARGET_WAYPOINTS = frozenset(range(33))
 

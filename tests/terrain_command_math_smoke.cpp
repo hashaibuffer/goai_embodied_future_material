@@ -14,7 +14,10 @@ int main() {
     assert(clear.risk[7] == 0.0F);
 
     auto step = flat;
-    step[8 * 12 + 6] = 0.5F;  // normalized 0.5 -> 0.4m step
+    for (std::size_t y = 3; y <= 8; ++y)
+        step[8 * 12 + y] = 0.5F;  // broad normalized 0.5 -> 0.4m step
+    for (std::size_t x = 4; x <= 11; ++x)
+        for (std::size_t y = 9; y <= 11; ++y) step[x * 12 + y] = 0.5F;
     const auto blocked = TerrainCommandMath::Rewrite(raw, step, raw);
     assert(blocked.risk[0] > 0.39F);
     assert(blocked.risk[7] == 1.0F);

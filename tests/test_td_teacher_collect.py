@@ -32,7 +32,7 @@ def test_flat_ground_preserves_command_after_smoother_is_settled():
 
 def test_clear_ground_can_accelerate_smoothly_within_official_limit():
     raw = np.asarray([0.7, 0.0, 0.0], dtype=np.float32)
-    settled = np.asarray([0.84, 0.0, 0.0], dtype=np.float32)
+    settled = np.asarray([0.735, 0.0, 0.0], dtype=np.float32)
     command, risk = rewrite_command(raw, full_valid_flat(), settled)
     np.testing.assert_allclose(command, settled, atol=1e-6)
     assert risk[7] == 0.0 and command[0] <= 1.0
@@ -40,10 +40,11 @@ def test_clear_ground_can_accelerate_smoothly_within_official_limit():
 
 def test_step_slows_and_left_obstacle_steers_right_with_slew_limit():
     grid = full_valid_flat()
-    grid[0, 8, 7] = 0.5  # 0.4m obstacle in the left half
+    grid[0, 8, 3:9] = 0.5  # broad 0.4m frontal step
+    grid[0, 4:12, 9:12] = 0.5  # persistent obstacle on the left
     raw = np.asarray([1.0, 0.0, 0.0], dtype=np.float32)
     command, risk = rewrite_command(raw, grid, raw)
-    assert risk[0] == np.float32(0.4)
+    assert risk[0] > np.float32(0.39)
     assert risk[7] == 1.0
     assert 0.959 <= command[0] < 1.0
     assert -0.031 <= command[1] < 0.0
@@ -53,9 +54,38 @@ def test_step_slows_and_left_obstacle_steers_right_with_slew_limit():
 def test_unknown_heightmap_is_conservative_and_finite():
     raw = np.asarray([0.7, 0.0, 0.0], dtype=np.float32)
     command, risk = rewrite_command(raw, np.zeros(384, np.float32), raw)
-    assert risk[5] == 1.0 and risk[6] == 0.0 and risk[7] == 1.0
+    assert risk[5] == 1.0 and risk[6] == 0.0
+    assert 0.69 <= risk[7] <= 0.71
     assert command[0] < raw[0]
     assert np.isfinite(command).all()
+
+
+def test_single_height_outlier_does_not_trigger_frontal_step():
+    grid = full_valid_flat()
+    grid[0, 8, 6] = 0.5
+    raw = np.asarray([0.7, 0.0, 0.0], dtype=np.float32)
+    command, risk = rewrite_command(raw, grid, np.asarray([0.77, 0.0, 0.0]))
+    assert risk[0] == 0.0 and risk[7] == 0.0
+    assert command[0] >= raw[0]
+
+
+def test_gentle_slope_is_not_full_risk_or_heavily_slowed():
+    grid = full_valid_flat()
+    grid[0, 4:12, :] = np.linspace(0.0, 0.25, 8, dtype=np.float32)[:, None]
+    raw = np.asarray([0.7, 0.0, 0.0], dtype=np.float32)
+    command, risk = rewrite_command(raw, grid, raw)
+    assert risk[7] < 0.5
+    assert command[0] >= raw[0]
+
+
+def test_side_wall_does_not_become_frontal_step():
+    grid = full_valid_flat()
+    grid[0, 4:12, 9:12] = 0.5
+    raw = np.asarray([0.7, 0.0, 0.0], dtype=np.float32)
+    command, risk = rewrite_command(raw, grid, raw)
+    assert risk[0] == 0.0
+    assert risk[7] == 0.0
+    assert -0.031 <= command[1] < 0.0
 
 
 def make_record(*, success=True, pre_failure=False, danger=False):
@@ -115,11 +145,12 @@ def test_ta_fail_segments_are_real_input_and_deduplicated(tmp_path):
 
 
 def test_difficult_segments_are_handed_to_privileged_teacher():
+    assert requires_privileged(6, 7)
+    assert requires_privileged(15, 16)
     assert requires_privileged(16, 17)
     assert requires_privileged(27, 28)
     assert requires_privileged(31, 32)
-    assert not requires_privileged(15, 16)
-    assert official_focus_waypoints([6, 16, 27, 28, 31, 32]) == (6,)
+    assert official_focus_waypoints([6, 16, 27, 28, 31, 32]) == ()
 
 
 def test_coverage_requires_flat_danger_failure_and_success_control(tmp_path):

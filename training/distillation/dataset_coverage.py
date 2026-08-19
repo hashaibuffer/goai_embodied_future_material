@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from focus_segments import (
-    PRIVILEGED_TARGET_WAYPOINTS, ROUTE_TARGET_WAYPOINTS,
+    PRIVILEGED_SEGMENTS, PRIVILEGED_TARGET_WAYPOINTS, ROUTE_TARGET_WAYPOINTS,
     load_fail_segments, official_focus_waypoints,
 )
 from schema import validate_dataset
@@ -21,7 +21,8 @@ def audit_coverage(paths, focus_ids, require_full_route=True):
     all_fail_ids = tuple(sorted(set(int(value) for value in focus_ids)))
     focus_ids = official_focus_waypoints(all_fail_ids)
     observed_route_targets = set()
-    privileged_samples = {target: 0 for target in sorted(PRIVILEGED_TARGET_WAYPOINTS | {17})}
+    privileged_targets = set(PRIVILEGED_TARGET_WAYPOINTS) | {next_wp for _, next_wp in PRIVILEGED_SEGMENTS}
+    privileged_samples = {target: 0 for target in sorted(privileged_targets)}
     per_waypoint = {
         wp: {"samples": 0, "pre_failure": 0, "success": 0} for wp in focus_ids
     }
@@ -45,8 +46,9 @@ def audit_coverage(paths, focus_ids, require_full_route=True):
             )
             for target in privileged_samples:
                 selected_privileged = data["next_wp_id"] == target
-                if target == 17:
-                    selected_privileged &= data["wp_id"] == 16
+                matching_segments = {wp for wp, next_wp in PRIVILEGED_SEGMENTS if next_wp == target}
+                if matching_segments:
+                    selected_privileged &= np.isin(data["wp_id"], tuple(matching_segments))
                 privileged_samples[target] += int(np.count_nonzero(selected_privileged))
             totals["samples"] += count
             risk = data["risk_features"][:, 7]
@@ -99,7 +101,7 @@ def audit_coverage(paths, focus_ids, require_full_route=True):
         "totals": totals,
         "all_fail_waypoints": list(all_fail_ids),
         "official_focus_waypoints": list(focus_ids),
-        "privileged_segments": [[16, 17]],
+        "privileged_segments": [list(segment) for segment in sorted(PRIVILEGED_SEGMENTS)],
         "privileged_target_waypoints": sorted(PRIVILEGED_TARGET_WAYPOINTS),
         "privileged_coverage_samples": {str(k): v for k, v in privileged_samples.items()},
         "missing_route_targets": missing_route_targets,

@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <iostream>
 #include <mutex>
 #include <string>
@@ -41,6 +42,8 @@ public:
         session_ = Ort::Session(env_, model_path_.c_str(), session_options_);
         ValidateModel();
         InitializeRobotAction();
+        const char* rewrite_mode = std::getenv("S10_TD_REWRITE_MODE");
+        rewrite_enabled_ = rewrite_mode == nullptr || std::string(rewrite_mode) != "off";
         heightmap_sub_ = node_->create_subscription<std_msgs::msg::Float32MultiArray>(
             heightmap_topic, rclcpp::QoS(1).best_effort(),
             [this](const std_msgs::msg::Float32MultiArray::SharedPtr msg) {
@@ -61,7 +64,8 @@ public:
 
     void DisplayPolicyInfo() override {
         std::cout << "TeacherCollectRunner official_model=" << model_path_
-                  << " teacher=[1,57]->[1,16] student=[1,441]" << std::endl;
+                  << " teacher=[1,57]->[1,16] student=[1,441]"
+                  << " terrain_rewrite=" << (rewrite_enabled_ ? "on" : "off") << std::endl;
     }
 
     void OnEnter() override {
@@ -89,8 +93,8 @@ public:
             }
         }
 
-        const auto rewrite = TerrainCommandMath::Rewrite(
-            raw, heightmap, previous_terrain_command_);
+        auto rewrite = TerrainCommandMath::Rewrite(raw, heightmap, previous_terrain_command_);
+        if (!rewrite_enabled_) rewrite.command = raw;
         previous_terrain_command_ = rewrite.command;
 
         // Both observations are assembled before last_action_ is updated. This
@@ -221,6 +225,7 @@ private:
     std::mutex heightmap_mutex_;
     std::array<float, 384> heightmap_{};
     bool has_heightmap_{false};
+    bool rewrite_enabled_{true};
     std::chrono::steady_clock::time_point heightmap_received_at_{};
     std::uint64_t sequence_{0};
     rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr heightmap_sub_;

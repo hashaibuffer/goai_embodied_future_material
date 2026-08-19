@@ -16,15 +16,19 @@ collection:
   initial_yaw_jitter_rad: 0.05
 terrain_command:
   forward_roi_x_indices: [4, 11]
+  wheel_corridor_y_indices: [3, 8]
   step_threshold_m: 0.25
   drop_threshold_m: 0.20
-  slope_threshold_m: 0.20
-  unknown_risk_start: 0.35
-  risk_deadband: 0.15
-  flat_speed_scale: 1.20
-  minimum_speed_scale: 0.50
-  avoidance_gain: 0.60
-  maximum_avoidance_vy: 0.12
+  slope_threshold_m: 0.35
+  slope_risk_weight: 0.45
+  unknown_risk_start: 0.45
+  unknown_risk_weight: 0.70
+  risk_deadband: 0.25
+  flat_speed_scale: 1.05
+  minimum_speed_scale: 0.95
+  obstacle_deadband_m: 0.12
+  avoidance_gain: 0.15
+  maximum_avoidance_vy: 0.03
   slew_per_policy_step: [0.04, 0.03, 0.06]
 failure_codes:
   none: 0
