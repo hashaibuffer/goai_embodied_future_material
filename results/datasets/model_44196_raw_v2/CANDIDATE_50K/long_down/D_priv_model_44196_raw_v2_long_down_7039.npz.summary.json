@@ -1,0 +1,6 @@
+{
+  "labels_usable": true,
+  "output": "/home/hashvr/goai_embodied_future_material/results/datasets/model_44196_raw_v2/CANDIDATE_50K/long_down/D_priv_model_44196_raw_v2_long_down_7039.npz",
+  "samples": 1000,
+  "teacher": "/home/hashvr/goai_embodied_future_material/artifacts/teacher_model_44196_1413_raw100.onnx"
+}
