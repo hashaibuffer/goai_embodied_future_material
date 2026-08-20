@@ -63,6 +63,44 @@ class ZeroPolicy:
         return np.zeros(16, np.float32)
 
 
+class StudentRolloutPolicy:
+    """441-D behavior policy used for DAgger-style state visitation."""
+
+    def __init__(self, path):
+        try:
+            import onnxruntime as ort
+        except ImportError as exc:
+            raise RuntimeError(
+                "onnxruntime is required for student rollout: pip install onnxruntime") from exc
+        self.session = ort.InferenceSession(
+            str(path), providers=["CPUExecutionProvider"])
+        inputs, outputs = self.session.get_inputs(), self.session.get_outputs()
+        if len(inputs) != 1 or inputs[0].name != "obs" or inputs[0].shape[-1] != 441:
+            raise ValueError(
+                "student ONNX input must be obs[batch,441], got "
+                f"{[(x.name, x.shape) for x in inputs]}")
+        if (len(outputs) != 1 or outputs[0].name != "actions"
+                or outputs[0].shape[-1] != 16):
+            raise ValueError(
+                "student ONNX output must be actions[batch,16], got "
+                f"{[(x.name, x.shape) for x in outputs]}")
+
+    def __call__(self, obs):
+        observation = np.asarray(obs, np.float32)
+        if observation.shape != (441,) or not np.isfinite(observation).all():
+            raise ValueError("student rollout requires one finite 441-D observation")
+        action = self.session.run(
+            ["actions"], {"obs": observation[None]})[0][0]
+        if action.shape != (16,) or not np.isfinite(action).all():
+            raise RuntimeError("student rollout policy returned an invalid action")
+        max_abs = float(np.max(np.abs(action)))
+        if max_abs > ACTION_RAW_LIMIT:
+            raise RuntimeError(
+                "student rollout output exceeds the raw action safety limit: "
+                f"max_abs={max_abs:.6g} > {ACTION_RAW_LIMIT:.6g}")
+        return action.astype(np.float32)
+
+
 def file_sha256(path):
     digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
     return digest
@@ -108,6 +146,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--teacher-onnx", type=Path)
     parser.add_argument("--fake-policy", action="store_true", help="Protocol smoke only; labels are unusable")
+    parser.add_argument(
+        "--rollout-policy", type=Path,
+        help=("Optional 441->16 student ONNX that drives MuJoCo while the "
+              "privileged teacher still supplies every saved action label"))
     parser.add_argument("--xml", type=Path, default=DEFAULT_XML)
     parser.add_argument("--lidar-config", type=Path, default=DEFAULT_LIDAR)
     parser.add_argument("--heightmap-config", type=Path, default=DEFAULT_HEIGHTMAP)
@@ -124,6 +166,8 @@ def main():
     args = parser.parse_args()
     if args.fake_policy == (args.teacher_onnx is not None):
         parser.error("choose exactly one of --teacher-onnx or --fake-policy")
+    if args.fake_policy and args.rollout_policy is not None:
+        parser.error("--rollout-policy requires a real --teacher-onnx labeler")
     if args.samples <= 0:
         parser.error("--samples must be positive")
 
@@ -148,7 +192,10 @@ def main():
     lidar = MujocoLidarScanner(model, lidar_cfg, rng=rng)
     heightmap_cfg = load_heightmap_config(args.heightmap_config)
     privileged = PrivilegedHeightScanner(model, body_exclude=base_id)
-    policy = ZeroPolicy() if args.fake_policy else TeacherPolicy(args.teacher_onnx)
+    teacher_policy = ZeroPolicy() if args.fake_policy else TeacherPolicy(args.teacher_onnx)
+    rollout_policy = (
+        StudentRolloutPolicy(args.rollout_policy)
+        if args.rollout_policy is not None else None)
     teacher_model = None if args.fake_policy else args.teacher_onnx
     recorder = DPrivRecorder(
         teacher_model=teacher_model,
@@ -164,6 +211,13 @@ def main():
             "terrain_id": args.terrain_id, "episode_id": args.episode_id,
             "seed": args.seed,
             "labels_usable": not args.fake_policy,
+            "behavior_policy": "student_onnx" if rollout_policy else (
+                "fake_policy" if args.fake_policy else "privileged_teacher"),
+            "behavior_model": (
+                str(args.rollout_policy.resolve()) if args.rollout_policy else None),
+            "behavior_sha256": (
+                file_sha256(args.rollout_policy) if args.rollout_policy else None),
+            "dagger_state_visitation": rollout_policy is not None,
         })
     waypoints = waypoint_positions(model, data)
     command = np.asarray(args.command, np.float32)
@@ -198,18 +252,23 @@ def main():
         privileged_height, hit, _ = privileged.scan(
             data, state.base_pos_w, state.base_rotation_w)
         teacher_obs = assemble_teacher_1413(state, proprio, privileged_height)
-        action = policy(teacher_obs)
         student_obs = np.concatenate([proprio, student_map.reshape(-1)]).astype(np.float32)
         if student_obs.shape != (441,):
             raise RuntimeError(f"student observation is {student_obs.shape}, expected (441,)")
+        # Label and behavior are deliberately separate.  The privileged
+        # teacher labels states visited by the student; last_action and the
+        # actuators must follow the behavior action to avoid future leakage.
+        teacher_action = teacher_policy(teacher_obs)
+        behavior_action = (
+            rollout_policy(student_obs) if rollout_policy else teacher_action)
         pose = np.concatenate([state.base_pos_w, data.xquat[base_id]]).astype(np.float32)
         recorder.append(
-            student_obs=student_obs, teacher_action_raw=action, command_raw=command,
+            student_obs=student_obs, teacher_action_raw=teacher_action, command_raw=command,
             waypoint_id=nearest_waypoint(state.base_pos_w, waypoints), terrain_id=args.terrain_id,
             episode_id=args.episode_id, step_id=sample, base_pose_wxyz=pose,
             privileged_hit_fraction=float(hit.mean()))
-        last_action = action
-        goal_pos, goal_vel = decode_action_raw(action)
+        last_action = behavior_action
+        goal_pos, goal_vel = decode_action_raw(behavior_action)
         raw_pos, raw_vel = published_targets_to_raw(goal_pos, goal_vel)
         for _ in range(20):
             q, dq = data.qpos[7:23], data.qvel[6:22]
@@ -233,6 +292,8 @@ def main():
     summary = {
         "output": str(output.resolve()), "samples": count,
         "teacher": "fake_policy" if args.fake_policy else str(args.teacher_onnx.resolve()),
+        "rollout_policy": (
+            str(args.rollout_policy.resolve()) if args.rollout_policy else None),
         "labels_usable": not args.fake_policy,
     }
     output.with_suffix(output.suffix + ".summary.json").write_text(

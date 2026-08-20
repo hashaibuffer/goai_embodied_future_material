@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 import yaml
 
 from s10_terrain_policy import PolicyContract
@@ -82,20 +83,26 @@ def test_runner_does_not_convert_robot_basic_state_rpy_twice():
     assert "TerrainPolicyMath::AssembleObservation" in source
 
 
-def test_placeholder_model_is_deterministic(tmp_path):
-    generated = tmp_path / "terrain_locomotion.onnx"
-    subprocess.run(
-        [sys.executable, str(REPO_ROOT / "tools/export_zero_policy.py"), str(generated)],
-        check=True,
-    )
-    assert generated.read_bytes() == MODEL.read_bytes()
-    payload = generated.read_bytes()
-    assert b"obs" in payload
-    assert b"actions" in payload
-    assert b"Constant" in payload
+def test_trained_model_has_dynamic_frozen_contract():
+    onnx = pytest.importorskip("onnx")
+    ort = pytest.importorskip("onnxruntime")
+    graph = onnx.load(str(MODEL))
+    onnx.checker.check_model(graph)
+    input_dims = graph.graph.input[0].type.tensor_type.shape.dim
+    output_dims = graph.graph.output[0].type.tensor_type.shape.dim
+    assert graph.graph.input[0].name == "obs"
+    assert graph.graph.output[0].name == "actions"
+    assert input_dims[0].dim_param and input_dims[1].dim_value == 441
+    assert output_dims[0].dim_param and output_dims[1].dim_value == 16
+    session = ort.InferenceSession(str(MODEL), providers=["CPUExecutionProvider"])
+    output = session.run(["actions"], {"obs": np.zeros((3, 441), np.float32)})[0]
+    assert output.shape == (3, 16)
+    assert np.isfinite(output).all()
 
 
 def test_cpp_observation_and_action_contract_executes(tmp_path):
+    if shutil.which("g++") is None:
+        pytest.skip("g++ is not installed on this host")
     executable = tmp_path / "terrain_policy_math_smoke"
     subprocess.run(
         [

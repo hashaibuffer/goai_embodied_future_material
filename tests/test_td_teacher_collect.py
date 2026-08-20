@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import subprocess
+import shutil
 import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "training/distillation"))
@@ -177,6 +179,8 @@ def test_coverage_rejects_missing_success_control(tmp_path):
 
 
 def test_cpp_terrain_command_contract_executes(tmp_path):
+    if shutil.which("g++") is None:
+        pytest.skip("g++ is not installed on this host")
     executable = tmp_path / "terrain_command_math_smoke"
     subprocess.run([
         "g++", "-std=c++17", "-Wall", "-Wextra", "-Werror",
@@ -189,7 +193,8 @@ def test_cpp_terrain_command_contract_executes(tmp_path):
 
 
 def test_teacher_runner_prevents_future_action_leakage_and_uses_official_shape():
-    source = (ROOT / "src/s10_terrain_policy/cpp/teacher_collect_runner.hpp").read_text()
+    source = (ROOT / "src/s10_terrain_policy/cpp/teacher_collect_runner.hpp").read_text(
+        encoding="utf-8")
     assert "Both observations are assembled before last_action_ is updated" in source
     assert source.index("Publish(student") < source.index("last_action_ = action")
     assert "input.back() != 57" in source
@@ -198,21 +203,22 @@ def test_teacher_runner_prevents_future_action_leakage_and_uses_official_shape()
 
 
 def test_autonav_is_reused_for_status_and_failure_labels():
-    source = (ROOT / "src/S10_sdk_deploy/interface/user_command/autonav_interface.hpp").read_text()
+    source = (ROOT / "src/S10_sdk_deploy/interface/user_command/autonav_interface.hpp").read_text(
+        encoding="utf-8")
     assert '"/S10_AUTONAV_STATUS"' in source
     assert "detect_stall" in source and "request_teleport" in source
     assert "publish_status(teleported, failure_code(reason))" in source
 
 
 def test_teleport_assisted_waypoint_is_not_a_success_control():
-    source = (ROOT / "training/distillation/collect.py").read_text()
+    source = (ROOT / "training/distillation/collect.py").read_text(encoding="utf-8")
     assert 'and not record["post_teleport"]' in source
 
 
 def test_simulator_supports_seeded_initial_pose_jitter():
     source = (
         ROOT / "src/S10_sdk_deploy/interface/robot/simulation/mujoco_simulation_ros2.py"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert "S10_START_JITTER_X" in source
     assert "S10_START_JITTER_Y" in source
     assert "S10_START_JITTER_YAW" in source

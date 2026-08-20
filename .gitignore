@@ -6,3 +6,5 @@ tmp/
 AGENTS.md
 __pycache__/
 *.py[cod]
+.venv*/
+results/distillation_runs/

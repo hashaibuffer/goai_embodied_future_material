@@ -150,3 +150,13 @@ def test_d_priv_write_returns_npz_path(tmp_path):
     assert path.exists(), f"write() returned {path} but file not found"
     assert path.suffix == ".npz", f"expected .npz suffix, got {path.suffix}"
     assert validate_d_priv(path) == 1
+
+
+def test_dagger_collector_keeps_teacher_labels_separate_from_behavior():
+    source = (ROOT / "scripts" / "collect_mujoco_d_priv.py").read_text(
+        encoding="utf-8")
+    assert "teacher_action = teacher_policy(teacher_obs)" in source
+    assert "rollout_policy(student_obs) if rollout_policy else teacher_action" in source
+    assert "teacher_action_raw=teacher_action" in source
+    assert "last_action = behavior_action" in source
+    assert "decode_action_raw(behavior_action)" in source

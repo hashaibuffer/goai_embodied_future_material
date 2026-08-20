@@ -2,9 +2,11 @@
 name = "s10-terrain-aware-policy"
 version = "0.1.0"
 requires-python = ">=3.10"
-dependencies = ["numpy", "pyyaml"]
+dependencies = ["numpy < 2.0", "pyyaml"]
 
 [project.optional-dependencies]
+te = ["torch", "onnx", "onnxruntime"]
+sim = ["mujoco"]
 dev = ["pytest"]
 
 [tool.pytest.ini_options]

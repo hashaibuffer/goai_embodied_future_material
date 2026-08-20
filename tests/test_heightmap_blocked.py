@@ -34,14 +34,14 @@ SHADOW = (slice(8, 16), slice(4, 9))
 
 
 def blocked_xml():
-    txt = XML.read_text()
+    txt = XML.read_text(encoding="utf-8")
     assert txt.count("</worldbody>") == 1
     return txt.replace("</worldbody>", BOARD + "</worldbody>")
 
 
 def scan(xml_str):
     """加载模型 → start 位姿 → mj_multiRay 全扫，返回 (points, pos, R, 命中板子数)。"""
-    TMP.write_text(xml_str)
+    TMP.write_text(xml_str, encoding="utf-8")
     try:
         model = mujoco.MjModel.from_xml_path(str(TMP))
     finally:
@@ -80,7 +80,7 @@ def cfg():
 def test_blocked_mask_drops_instead_of_full_terrain(cfg):
     """板子挡住雷达 → 阴影区掩码/高度全 0，不再输出完整地形。"""
     pts_b, pos, R, n_board = scan(blocked_xml())
-    pts_n, _, _, _ = scan(XML.read_text())
+    pts_n, _, _, _ = scan(XML.read_text(encoding="utf-8"))
 
     assert n_board > 0                                  # 板子确实被扫到
     pol_b = hm.build_heightmap(pts_b, pos, R, cfg)

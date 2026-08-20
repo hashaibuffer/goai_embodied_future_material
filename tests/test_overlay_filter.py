@@ -29,7 +29,8 @@ GG_ALL = np.asarray([1, 1, 1, 1, 1, 1], dtype=np.uint8)        # 对照组（不
 
 def scan(gg):
     """start 位姿全扫，返回 (points, pos, R, group 分布)。"""
-    TMP.write_text(XML.read_text())
+    TMP.write_text(
+        XML.read_text(encoding="utf-8"), encoding="utf-8")
     try:
         model = mujoco.MjModel.from_xml_path(str(TMP))
     finally:

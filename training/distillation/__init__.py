@@ -1,1 +1,1 @@
-"""TD teacher collection and dataset utilities."""
+"""TD collection and TE privileged-policy distillation utilities."""
