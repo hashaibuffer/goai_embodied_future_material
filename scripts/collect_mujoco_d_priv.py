@@ -19,7 +19,7 @@ from mujoco_lidar import MujocoLidarScanner, load_lidar_yaml
 from mujoco_teacher import (
     JOINT_INIT_RAW, PrivilegedHeightScanner, assemble_official_57,
     assemble_teacher_1413, decode_action_norm, published_targets_to_raw,
-    state_from_mujoco)
+    run_stand_up, state_from_mujoco)
 
 DEFAULT_XML = ROOT / "models" / "mjcf" / "S10_track_lidar.xml"
 DEFAULT_LIDAR = ROOT / "configs" / "lidar.yaml"
@@ -133,6 +133,13 @@ def main():
     if base_id < 0:
         raise RuntimeError("MJCF has no base_link")
 
+    # 复刻官方 StandUpState：坐姿起立到站姿，起立期不喂教师、不写数据。
+    # 否则首拍坐姿观测喂站姿教师 -> OOD 饱和 -> 关节目标突变 -> 塌陷。
+    stand_up_z = run_stand_up(model, data, base_id, log=True)
+    if stand_up_z < 0.30:
+        print(f"warning: stand-up under height base_z={stand_up_z:.3f}, "
+              f"teacher may start OOD; check MJCF/actuators", flush=True)
+
     rng = np.random.default_rng(args.seed)
     lidar_cfg = load_lidar_yaml(args.lidar_config)
     lidar = MujocoLidarScanner(model, lidar_cfg, rng=rng)
@@ -180,7 +187,8 @@ def main():
                 command = active[-1, 1:4].astype(np.float32)
         command = np.clip(command, [-1, -.6, -1], [1, .6, 1]).astype(np.float32)
         state = state_from_mujoco(model, data, base_id)
-        if sample > 0 and state.base_pos_w[2] < args.stop_base_z:
+        # fake-policy 模式只验证协议格式，零动作无法维持站姿属预期，跳过高度检查。
+        if not args.fake_policy and sample > 0 and state.base_pos_w[2] < args.stop_base_z:
             print(f"stopping early: base_z={state.base_pos_w[2]:.3f} < {args.stop_base_z:.3f}")
             break
         proprio = assemble_official_57(state, command, last_action)

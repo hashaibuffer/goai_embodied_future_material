@@ -106,6 +106,82 @@ def published_targets_to_raw(goal_pos, goal_vel):
     )
 
 
+# ---------------------------------------------------------------------------
+# StandUp 起立：官方状态机 StandUpState 的 MuJoCo 等价实现。
+# 比赛运行时 rl_deploy 会先走 StandUpState（纯运动学起立，无网络），
+# 起立完成后再进 RLControlMode 跑策略。采集器必须复刻同一起立时序，
+# 否则首拍把坐姿 JOINT_INIT_RAW 直接喂给站姿训练的教师 -> OOD -> 塌陷。
+# ---------------------------------------------------------------------------
+STAND_UP_DURATION_S = 3.0
+# 官方起立刚度：腿 swing_leg_kp/kd = 120/2；轮是速度控制 kp=0、kd=0.6 阻尼。
+STAND_UP_KP = np.asarray([120.0, 120.0, 120.0, 0.0] * 4, np.float32)
+STAND_UP_KD = np.asarray([2.0, 2.0, 2.0, 0.6] * 4, np.float32)
+
+
+def cubic_spline_pos(x0, v0, xf, vf, t, T):
+    """复刻官方 GetCubicSplinePos：三次 Hermite 插值位置。"""
+    if t >= T:
+        return float(xf)
+    a = (vf * T - 2.0 * xf + v0 * T + 2.0 * x0) / (T ** 3)
+    b = (3.0 * xf - vf * T - 2.0 * v0 * T - 3.0 * x0) / (T ** 2)
+    return a * t ** 3 + b * t ** 2 + v0 * t + x0
+
+
+def cubic_spline_vel(x0, v0, xf, vf, t, T):
+    """复刻官方 GetCubicSplineVel：三次 Hermite 插值速度。"""
+    if t >= T:
+        return 0.0
+    a = (vf * T - 2.0 * xf + v0 * T + 2.0 * x0) / (T ** 3)
+    b = (3.0 * xf - vf * T - 2.0 * v0 * T - 3.0 * x0) / (T ** 2)
+    return 3.0 * a * t ** 2 + 2.0 * b * t + v0
+
+
+def stand_up_target_raw():
+    """起立终点 = 教师训练默认站姿，直接就是 raw/MJCF 关节角。
+
+    注意：DEFAULT_ROBOT 与 JOINT_INIT_RAW 同属 raw 空间（两者都是
+    IK 直接算出的物理关节角，可用 GetHipYPosByHeight/GetKneePosByHeight
+    核实：h=0.48 -> hipy=-0.284, knee=0.568，与 DEFAULT_ROBOT 的
+    [-0.3, 0.6] 吻合）。decode_action_norm/published_targets_to_raw 是
+    "策略输出 action_norm -> 目标关节角" 的运行时解码管线，只能作用于
+    策略动作，不能套在静态的 DEFAULT_ROBOT 常量上，否则会被
+    JOINT_DIR/POS_OFFSET_RAD 二次错误变换，导致目标超出 MJCF 关节限位
+    （例如 hipy 会跳到 ±2.8rad，远超 ±2.53rad 硬限位）。
+    """
+    return DEFAULT_ROBOT.astype(np.float64).copy()
+
+
+def run_stand_up(model, data, base_id, duration_s=STAND_UP_DURATION_S, log=False):
+    """从坐姿 JOINT_INIT_RAW 起立到 DEFAULT_ROBOT，返回起立后的 base_z。
+
+    起立期只做位置+速度前馈 PD，不喂任何策略、不写任何数据。
+    起立刚度沿用官方 StandUpState（腿 120/2，轮 0/0.6 阻尼）。
+    """
+    dt = float(model.opt.timestep)
+    init_raw = JOINT_INIT_RAW.astype(np.float64)
+    target_raw = stand_up_target_raw().astype(np.float64)
+    kp = STAND_UP_KP
+    kd = STAND_UP_KD
+    steps = int(round(duration_s / dt))
+    for i in range(steps):
+        t = (i + 1) * dt
+        planned_pos = np.asarray([
+            cubic_spline_pos(init_raw[j], 0.0, target_raw[j], 0.0, t, duration_s)
+            for j in range(16)], np.float64)
+        planned_vel = np.asarray([
+            cubic_spline_vel(init_raw[j], 0.0, target_raw[j], 0.0, t, duration_s)
+            for j in range(16)], np.float64)
+        q = data.qpos[7:23]
+        dq = data.qvel[6:22]
+        data.ctrl[:] = kp * (planned_pos - q) + kd * (planned_vel - dq)
+        mujoco.mj_step(model, data)
+    mujoco.mj_forward(model, data)
+    base_z = float(data.xpos[base_id][2])
+    if log:
+        print(f"[StandUp] complete: base_z={base_z:.3f} (standing posture DEFAULT_ROBOT)")
+    return base_z
+
+
 class PrivilegedHeightScanner:
     """Exact Isaac GridPattern equivalent: 41x33 vertical rays, yaw aligned."""
     X = np.linspace(-.8, 3.2, 41, dtype=np.float64)

@@ -70,6 +70,10 @@ class DPrivRecorder:
             base_pose_wxyz=np.asarray(self.rows["base_pose_wxyz"], np.float32),
             privileged_hit_fraction=np.asarray(self.rows["privileged_hit_fraction"], np.float32),
         )
+        # np.savez_compressed silently appends .npz when the path lacks that suffix;
+        # return the path that was actually written so callers can find the file.
+        if not output.suffix == ".npz":
+            output = output.with_suffix(output.suffix + ".npz")
         return output
 
 

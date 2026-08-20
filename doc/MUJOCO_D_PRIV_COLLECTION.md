@@ -84,6 +84,40 @@ MuJoCo 状态快照
 
 如果输入维度不是 `1413`，立即停止；不要通过补零、截断或复制高度图“修正”维度。
 
+### 1.4 采集起点必须先起立，不能把坐姿直接喂给教师
+
+比赛真机和官方 `rl_deploy` 都是先跑纯运动学 `StandUpState`（无网络、固定 PD 目标），起立完成后才切入 `RLControlMode` 开始跑策略。采集器必须复刻同一时序，否则第一拍就会把出生姿态 `JOINT_INIT_RAW`（蹲姿，`hipy≈-1.16`、`knee≈2.76`）直接喂给按站姿 `DEFAULT_ROBOT`（`hipy≈-0.3`、`knee≈0.6`）训练的教师：
+
+```text
+坐姿观测（偏差最大约 1.7 rad）
+  -> 教师 actor 原始输出严重饱和（16 维中 15 维打到 ±1）
+  -> clip/tanh 后动作仍然是极端值
+  -> 目标关节瞬间跳变最大约 1.9 rad，轮速跳变 ±5 rad/s
+  -> base_z 在 7 个控制周期内跌破 stop_base_z=0.08
+```
+
+`scripts/collect_mujoco_d_priv.py` 在 `initialize()` 之后、正式采集循环之前，会调用 `mujoco_teacher.run_stand_up()`：
+
+- 起点：`JOINT_INIT_RAW`（与 `initialize()` 写入的坐姿一致）；
+- 终点：`mujoco_teacher.stand_up_target_raw()`，其值就是 `DEFAULT_ROBOT` 本身（**不经过** `decode_action_norm`/`published_targets_to_raw` 二次变换——`DEFAULT_ROBOT` 已经是 raw/MJCF 空间的物理关节角，可用 `GetHipYPosByHeight/GetKneePosByHeight` 逆运动学核实：`h=0.48 -> hipy=-0.284, knee=0.568`，与 `DEFAULT_ROBOT` 的 `[-0.3, 0.6]` 吻合；若再套一次 `JOINT_DIR/POS_OFFSET_RAD` 会把目标推出 MJCF 硬限位，例如 hipy 会跳到 `±2.83 rad`，超过 `±2.53 rad` 限位）；
+- 时长/增益：`STAND_UP_DURATION_S=3.0s`，腿 `kp=120/kd=2`，轮 `kp=0/kd=0.6`，与 C++ `StandUpState`/`s10_control_parameters.cpp` 一致；
+- 三次样条插值位置和速度（复刻 `GetCubicSplinePos/GetCubicSplineVel`）；
+- 起立阶段不查询教师、不写任何 `D_priv` 样本，只做纯运动学 PD 收敛。
+
+起立结束后 `base_z` 应稳定在 `0.40` 左右（地面支撑反力下略低于 `stand_height_=0.48`），低于 `0.30` 会打印 warning，提示检查 MJCF/actuator 配置。
+
+**这一步与教师/学生模型训练完全解耦**：`run_stand_up` 只是固定运动学轨迹，不依赖策略权重；真机比赛时同理，起步先走 repo 自带的 `StandUpState`，与用哪个训练版本的教师/学生策略无关。
+
+## 1.5 零动作不代表"能站稳"
+
+用 `--fake-policy`（`ZeroPolicy`，恒定输出零动作）做 smoke 时，`base_z` 会缓慢沉到约 `0.08` 附近并稳定（零动作只给出静态目标 `DEFAULT_ROBOT`，没有任何主动平衡补偿；真实教师策略会持续输出小的修正动作维持平衡，类似人站立时的踝关节微调）。因此：
+
+- fake smoke 的 `base_z` 触底**不代表 StandUp 或采集协议有 bug**，只代表零动作本身无法维持站姿；
+- 采集器对 `--fake-policy` 跳过 `--stop-base-z` 提前终止检查，只验证协议格式（维度、dtype、字段），샘플数量会跑满 `--samples`；
+- 真正验证"教师能否站稳/行走"必须使用第 5 节的真 ONNX 200 条 smoke，并结合 GUI 回放确认。
+
+如果输入维度不是 `1413`，立即停止；不要通过补零、截断或复制高度图"修正"维度。
+
 ## 2. 教师负责人需要交付什么
 
 最小交付包：
@@ -305,6 +339,7 @@ TE 只读取 `student_obs` 和 `teacher_action_norm` 训练 `441->16`；其他�
 - 教师输入不是 1413：拿错模型，停止采集。
 - hit fraction 低：出生点在赛道外、mesh/group 配置错误或竖直射线没有地面。
 - 样本数不足：机器人跌落触发 `--stop-base-z`；先修闭环，不要关闭保护硬采。
+- 首拍 15/16 维动作饱和到 ±1、机器人立即塌陷：坐姿 `JOINT_INIT_RAW` 直接喂给了按站姿训练的教师，产生 OOD 输入。原因通常是 `run_stand_up` 未能有效起立，或者 `stand_up_target_raw()` 因二次坐标变换算出了超出 MJCF 限位（hipy `±2.8 rad` 超过 `±2.53 rad`）的目标。修复方法：确认 `stand_up_target_raw()` 直接返回 `DEFAULT_ROBOT`，不再经过 `published_targets_to_raw`；起立结束后 `base_z` 应在 0.40 左右（低于 0.30 会打印 warning）。
 - 模型在 Isaac 能走、MuJoCo 立即摔：这是 sim-to-sim 失败，不能把动作当强标签；先检查关节方向、默认位姿、控制周期和动作是否重复 decode。
 - 只想测接口：必须使用 `--fake-policy`，并确保产物路径含 `FAKE`；其 metadata 会标记不可训练。
 
