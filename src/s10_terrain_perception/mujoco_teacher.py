@@ -44,6 +44,17 @@ class S10PolicyState:
 
 
 def state_from_mujoco(model, data, base_body_id) -> S10PolicyState:
+    """从 MuJoCo 状态提取策略输入。
+
+    注意：MJCF 的关节零点定义与 Isaac Lab/URDF 一致，data.qpos/qvel 直接
+    就是 policy(published) 空间的关节角/角速度，不需要 POS_OFFSET_RAD/
+    JOINT_DIR 变换 —— 那套变换只属于真实机器人电机编码器相对 URDF 零点的
+    标定偏移（见 s10_interface.hpp），与仿真 qpos 无关。
+    历史 bug：此前误把 qpos 当作电机编码器 raw 值做了
+    ((raw_pos - POS_OFFSET_RAD) * JOINT_DIR) 变换，导致机器人站姿下
+    joint_pos 观测偏离 DEFAULT_POLICY 最大 ~2.7rad，策略严重 OOD 后
+    输出饱和动作、约 11 步内倒地。修复为直接使用 qpos/qvel。
+    """
     spatial = np.zeros(6, dtype=np.float64)
     mujoco.mj_objectVelocity(
         model, data, mujoco.mjtObj.mjOBJ_BODY, base_body_id, spatial, 1)
@@ -53,8 +64,8 @@ def state_from_mujoco(model, data, base_body_id) -> S10PolicyState:
     return S10PolicyState(
         data.xpos[base_body_id].copy(), rotation,
         spatial[3:6].astype(np.float32), spatial[:3].astype(np.float32),
-        ((raw_pos - POS_OFFSET_RAD) * JOINT_DIR).astype(np.float32),
-        (raw_vel * JOINT_DIR).astype(np.float32))
+        np.asarray(raw_pos, np.float32).copy(),
+        np.asarray(raw_vel, np.float32).copy())
 
 
 def assemble_official_57(state: S10PolicyState, command_raw, last_action_norm):
@@ -100,9 +111,18 @@ def decode_action_norm(action_norm):
 
 
 def published_targets_to_raw(goal_pos, goal_vel):
+    """将策略解码出的目标关节角/角速度转换为 MuJoCo PD 控制目标（qpos/qvel 空间）。
+
+    注意：MJCF 的关节零点与 policy(published) 空间一致，此处不需要
+    POS_OFFSET_RAD/JOINT_DIR 变换（那是真实电机编码器标定，仅用于
+    真机硬件接口，见 s10_interface.hpp）。历史 bug：此前对 goal_pos/
+    goal_vel 施加了 *JOINT_DIR+POS_OFFSET_RAD 的二次错误变换，导致目标
+    超出 MJCF 关节硬限位（如 hipy 跳到 ±2.8rad > ±2.53rad），是采集时
+    机器人约 11 步倒地的根因之一。修复为直接透传。
+    """
     return (
-        np.asarray(goal_pos, np.float32) * JOINT_DIR + POS_OFFSET_RAD,
-        np.asarray(goal_vel, np.float32) * JOINT_DIR,
+        np.asarray(goal_pos, np.float32).copy(),
+        np.asarray(goal_vel, np.float32).copy(),
     )
 
 

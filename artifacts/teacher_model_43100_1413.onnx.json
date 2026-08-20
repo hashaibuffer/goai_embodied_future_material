@@ -1,0 +1,32 @@
+{
+  "action_contract": "a_norm",
+  "action_contract_adapter": true,
+  "action_postprocess": "clip",
+  "action_range": [
+    -1.0,
+    1.0
+  ],
+  "checkpoint": "/home/hashai/Projects/DeepRobotics/rl_training/logs/rsl_rl/deeprobotics_s10_privileged_teacher/2026-08-20_08-56-52/model_43100.pt",
+  "checkpoint_sha256": "a83206775ac16325b54454d74b8042ab130c7fbd552100f410eec6b7c3f18a32",
+  "empirical_normalization": false,
+  "input": {
+    "name": "obs",
+    "shape": [
+      "batch",
+      1413
+    ]
+  },
+  "onnx_sha256": "7f18fd0388bb4416371cefc053d650b6cedba0d9ba6b0084eeaeeaafc3d7ecac",
+  "opset": 17,
+  "output": {
+    "name": "actions",
+    "shape": [
+      "batch",
+      16
+    ]
+  },
+  "torch_onnx_parity": {
+    "checked": true,
+    "max_abs_error": 1.1920928955078125e-06
+  }
+}
