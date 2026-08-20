@@ -1,0 +1,33 @@
+{
+  "action_contract": "raw",
+  "action_contract_adapter": true,
+  "action_contract_note": "Actor mean scaled/offset by policy.yaml action_scale_robot + default_pose_robot, matching Isaac clip_actions=100 (not a [-1,1] normalized action). Downstream consumers must NOT assume |action|<=1.",
+  "action_postprocess": "clip",
+  "action_range": [
+    -100.0,
+    100.0
+  ],
+  "checkpoint": "/home/hashvr/goai_embodied_future_material/model_44196.pt",
+  "checkpoint_sha256": "fd9fd6bd6c8b2d0fc9e8b5ff94a5328814c07a1232be62905a426976e43257dd",
+  "empirical_normalization": false,
+  "input": {
+    "name": "obs",
+    "shape": [
+      "batch",
+      1413
+    ]
+  },
+  "onnx_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+  "opset": 17,
+  "output": {
+    "name": "actions",
+    "shape": [
+      "batch",
+      16
+    ]
+  },
+  "torch_onnx_parity": {
+    "checked": true,
+    "max_abs_error": 5.53131103515625e-05
+  }
+}

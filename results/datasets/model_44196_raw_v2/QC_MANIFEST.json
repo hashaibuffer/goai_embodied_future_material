@@ -1,0 +1,130 @@
+{
+  "model": "model_44196.pt",
+  "schema_version": 2,
+  "action_field": "teacher_action_raw",
+  "action_contract": "raw actor output, clip limit 100; never clip to [-1,1]",
+  "teacher_onnx": "artifacts/teacher_model_44196_1413_raw100.onnx",
+  "teacher_onnx_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+  "collector_commit": "c1e906f4f6eea3158ffe9d1642e45d2da32b1d83",
+  "recommended_vx_mps": 0.6,
+  "default_training_samples": 6000,
+  "te_contract_warning": "The current TE-distill.md still names teacher_action_norm. Schema v2 shards contain teacher_action_raw and TE must not assume [-1,1].",
+  "default_training_shards": [
+    {
+      "terrain": "flat",
+      "path": "FORMAL/flat/D_priv_model_44196_raw_v2_flat_3001.npz",
+      "sha256": "473545efcf87c8bbdca1096c01fa13c89f33b3890eb86930c56f3a4d4c5b50ce",
+      "samples": 1000,
+      "episode_id": 3001,
+      "seed": 301,
+      "displacement_m": 12.228,
+      "tilt_max_deg": 3.4,
+      "action_abs_max": 4.593
+    },
+    {
+      "terrain": "gentle_slope",
+      "path": "FORMAL/gentle_slope/D_priv_model_44196_raw_v2_gentle_slope_4001.npz",
+      "sha256": "7a5557dcacd5df838fccaa2f5c65a930af9249d277628f85f372d9ff4e376fce",
+      "samples": 1000,
+      "episode_id": 4001,
+      "seed": 403,
+      "displacement_m": 8.185,
+      "tilt_max_deg": 28.9,
+      "action_abs_max": 5.157
+    },
+    {
+      "terrain": "regular_stairs_up",
+      "path": "FORMAL/regular_stairs_up/D_priv_model_44196_raw_v2_regular_stairs_up_1003.npz",
+      "sha256": "8274f2b9a11d692fe470ec199d1b5d44145b978903f48c86f991dcf158858de5",
+      "samples": 1000,
+      "episode_id": 1003,
+      "seed": 103,
+      "displacement_m": 6.337,
+      "tilt_max_deg": 24.3,
+      "action_abs_max": 8.224
+    },
+    {
+      "terrain": "high_step",
+      "path": "FORMAL/high_step/D_priv_model_44196_raw_v2_high_step_2001.npz",
+      "sha256": "a7b728a60b4bd9cda5fe115f86fc237acdf09d5a95d5be6a713f6a6e9f952ecf",
+      "samples": 1000,
+      "episode_id": 2001,
+      "seed": 201,
+      "split_group": "high_step_v06_start_21p66_29p57",
+      "displacement_m": 3.314,
+      "tilt_max_deg": 22.1,
+      "action_abs_max": 7.742
+    },
+    {
+      "terrain": "high_step",
+      "path": "FORMAL/high_step/D_priv_model_44196_raw_v2_high_step_2004.npz",
+      "sha256": "8c374ae5095a4b5812668c10d78aac78c5bbf01e0a35569e64ac3aa8e51ac5e9",
+      "samples": 1000,
+      "episode_id": 2004,
+      "seed": 204,
+      "split_group": "high_step_v06_start_21p66_29p57",
+      "displacement_m": 3.314,
+      "tilt_max_deg": 22.1,
+      "action_abs_max": 7.742,
+      "note": "Same deterministic physical rollout as episode 2001 with a different noisy student LiDAR seed; keep both in the same train/validation split."
+    },
+    {
+      "terrain": "high_step_recovery",
+      "path": "FORMAL/recovery/D_priv_model_44196_raw_v2_high_step_recovery_5001.npz",
+      "sha256": "41d88d748a7a82ffd7b2370c1e0c8face2f67eb70f22f3081cec3f44625a7e77",
+      "samples": 1000,
+      "episode_id": 5001,
+      "seed": 502,
+      "displacement_m": 1.678,
+      "tilt_max_deg": 21.9,
+      "action_abs_max": 7.962,
+      "note": "vx stays at 0.6 m/s; wz is 0.35 for samples 120-219 to collect correction/recovery behavior."
+    }
+  ],
+  "auxiliary_speed_boundary_shards": [
+    {
+      "vx_mps": 0.7,
+      "path": "ACCEPTED/high_step/D_priv_model_44196_raw_v2_high_step_v0p7_2107.npz",
+      "samples": 800,
+      "note": "Safe prefix only; the 1000-sample rollout flips after sample 812."
+    },
+    {
+      "vx_mps": 0.8,
+      "path": "ACCEPTED/high_step/D_priv_model_44196_raw_v2_high_step_v0p8_2108.npz",
+      "samples": 900,
+      "note": "Safe prefix only; the 1000-sample rollout exceeds 35 deg tilt after sample 903."
+    },
+    {
+      "vx_mps": 0.9,
+      "path": "ACCEPTED/high_step/D_priv_model_44196_raw_v2_high_step_v0p9_2109.npz",
+      "samples": 450,
+      "note": "Safe prefix only; the long rollout first reaches the action limit at sample 493."
+    }
+  ],
+  "excluded_from_default_training": [
+    {
+      "path": "FORMAL/regular_stairs_up/D_priv_model_44196_raw_v2_regular_stairs_up_1002.npz",
+      "reason": "vx=0.3 m/s; no effective ascent."
+    },
+    {
+      "path": "FORMAL/high_step/D_priv_model_44196_raw_v2_high_step_2002.npz",
+      "reason": "vx=0.3 m/s; only 0.057 m net displacement."
+    },
+    {
+      "path": "FORMAL/high_step/D_priv_model_44196_raw_v2_high_step_2003.npz",
+      "reason": "vx=0.9 m/s; action saturation starts at sample 493, 7104 values reach +/-100, and max tilt is 120.6 deg."
+    },
+    {
+      "path": "FORMAL/high_step/D_priv_model_44196_raw_v2_high_step_2005.npz",
+      "reason": "vx=0.7 m/s; max tilt is 157.6 deg after the safe prefix."
+    },
+    {
+      "path": "FORMAL/high_step/D_priv_model_44196_raw_v2_high_step_2006.npz",
+      "reason": "vx=0.8 m/s; final tilt is 61.0 deg after the safe prefix."
+    },
+    {
+      "path": "VALIDATION/D_priv_model_44196_raw_v2_gentle_slope_up_401.npz",
+      "reason": "Candidate start did not make enough forward progress to cover the intended slope."
+    }
+  ]
+}
