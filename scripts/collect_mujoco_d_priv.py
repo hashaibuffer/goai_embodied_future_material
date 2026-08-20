@@ -24,6 +24,7 @@ from mujoco_teacher import (
 DEFAULT_XML = ROOT / "models" / "mjcf" / "S10_track_lidar.xml"
 DEFAULT_LIDAR = ROOT / "configs" / "lidar.yaml"
 DEFAULT_HEIGHTMAP = ROOT / "configs" / "heightmap.yaml"
+ACTION_NORM_LIMIT = 1.0 + 1e-5
 
 
 class TeacherPolicy:
@@ -43,6 +44,12 @@ class TeacherPolicy:
         action = self.session.run(["actions"], {"obs": np.asarray(obs, np.float32)[None]})[0][0]
         if action.shape != (16,) or not np.isfinite(action).all():
             raise RuntimeError("teacher returned an invalid normalized action")
+        max_abs = float(np.max(np.abs(action)))
+        if max_abs > ACTION_NORM_LIMIT:
+            raise RuntimeError(
+                f"teacher output is not normalized: max_abs={max_abs:.6g} > 1; "
+                "re-export the PT with --action-postprocess clip --action-limit 1 "
+                "or --action-postprocess tanh")
         return action.astype(np.float32)
 
 

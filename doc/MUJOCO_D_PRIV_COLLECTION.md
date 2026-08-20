@@ -31,6 +31,7 @@ label[16]         = teacher ONNX 输出的归一化 a_norm，禁止提前 decode
 - 教师推理不加训练随机噪声。学生 384 维必须来自比赛 `4344` 线 MuJoCo LiDAR 和 `heightmap.py`，绝不能复制教师真值。
 
 控制周期：MuJoCo `0.001 s`，教师 `0.02 s`，学生 LiDAR `20 Hz`。动作顺序和 scale 与官方 runner 相同，decode 只在仿真控制器执行一次。
+ONNX 的 `actions` 必须是 `a_norm ∈ [-1,1]`；采集器不会为错误模型静默截断，超范围会立即失败。
 
 ### 1.1 每个控制周期如何组装 `teacher_obs[1413]`
 
@@ -78,6 +79,7 @@ MuJoCo 状态快照
 - checkpoint 是冻结后的 S10 teacher，不是官方 57 维 policy，也不是学生 441 维网络；
 - actor 第一层输入为 `1413`，最后一层输出为 `16`；
 - checkpoint 没有需要外置的 observation normalizer，或 normalizer 已被明确封装进导出模型；
+- **确认动作后处理**：当前 RSL-RL Gaussian deterministic 输出是 actor 的原始均值，不是 `tanh`；S10 Isaac 环境入口的 `clip_actions=100` 也不是 MuJoCo 所需的 `a_norm` 范围。导出时必须使用 `--action-postprocess clip --action-limit 1`（或明确选择 `tanh`），把协议适配层封装进 ONNX；不能把原始均值直接当 `a_norm`。这一步会改变超出 `[-1,1]` 的动作，因而是 MuJoCo 合约适配，不等价于 Isaac 训练时的 `±100` 环境截断。
 - `teacher_action_norm` 仍是归一化动作，后续不得在数据集写入阶段 decode。
 
 如果输入维度不是 `1413`，立即停止；不要通过补零、截断或复制高度图“修正”维度。
@@ -102,7 +104,8 @@ conda activate isaaclab511
 cd /path/to/goai_embodied_future_material
 python tools/export_s10_teacher_onnx.py \
   --checkpoint /absolute/path/model_N.pt \
-  --output artifacts/teacher_model_N_1413.onnx
+  --output artifacts/teacher_model_N_1413.onnx \
+  --action-postprocess clip --action-limit 1
 ```
 
 导出器会强制检查：
@@ -111,8 +114,10 @@ python tools/export_s10_teacher_onnx.py \
 - actor 输出必须是 `16`；
 - tensor 名必须导出为 `obs` / `actions`；
 - opset 17、batch 动态；
+- 在导出前用 128 条随机 `1413` 维输入检查输出有限且绝对值不超过 `1.00001`；
 - 若环境有 `onnxruntime`，自动完成 3 条 probe 的 Torch/ONNX 数值对拍；
-- 同目录生成 `teacher_model_N_1413.onnx.json`，包含 PT/ONNX SHA256 和对拍最大误差。
+- 同目录生成 `teacher_model_N_1413.onnx.json`，包含 PT/ONNX SHA256、后处理方式、动作范围和对拍最大误差。
+- 使用 `--action-postprocess none` 只用于诊断；对于当前 `model_43100.pt` 等原始 Gaussian 均值 checkpoint，导出会因动作超范围而失败，禁止进入采集。
 
 如果出现 `expected 1413->16`，拿到的是普通 57 维策略、错误 checkpoint 或教师观测配置发生了变化，禁止继续采集。
 
@@ -228,8 +233,9 @@ python3 tools/inspect_d_priv.py \
 1. 实际样本数等于请求数，没有因 `base_z<0.08 m` 提前停止。
 2. `privileged_hit_fraction.min >= 0.99`；否则检查出生点、赛道 mesh 和 geom group。
 3. action 全部有限，且不是全零/常量。
-4. base 没有快速下坠或爆飞。
-5. 用同一 ONNX 做一次短 GUI/官方仿真回放，确认站立、前进和转向至少与 Isaac 基本一致；不通过时禁止批采。
+4. action 的绝对值全部不超过 `1.00001`；否则说明拿到的是未适配 ONNX，立即停止。
+5. base 没有快速下坠或爆飞。
+6. 用同一 ONNX 做一次短 GUI/官方仿真回放，确认站立、前进和转向至少与 Isaac 基本一致；不通过时禁止批采。
 
 ## 6. 分困难路段采集
 
