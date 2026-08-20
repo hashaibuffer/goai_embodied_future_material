@@ -32,6 +32,56 @@ label[16]         = teacher ONNX 输出的归一化 a_norm，禁止提前 decode
 
 控制周期：MuJoCo `0.001 s`，教师 `0.02 s`，学生 LiDAR `20 Hz`。动作顺序和 scale 与官方 runner 相同，decode 只在仿真控制器执行一次。
 
+### 1.1 每个控制周期如何组装 `teacher_obs[1413]`
+
+采集器在每个 `0.02 s` 控制边界使用**同一个 MuJoCo 状态快照**完成以下步骤。不要把不同时间的速度、扫描和动作拼在同一个样本中。
+
+| 切片 | 维度 | 内容 | 处理规则 |
+| --- | ---: | --- | --- |
+| `obs[0:3]` | 3 | `base_lin_vel_body` | 从 MuJoCo `base_link` 的 body velocity 读取，保持 body frame，不能改成世界系 |
+| `obs[3:60]` | 57 | `official_proprio` | 与官方 runner 完全同序：`base_ang_vel*0.25`、投影重力、`cmd_raw`、16 维关节位置、16 维关节速度、上一拍 `a_norm[16]` |
+| `obs[60:1413]` | 1353 | `privileged_height` | 41×33 个 yaw-only 垂直射线，按 y 外层、x 内层展平 |
+
+其中 `official_proprio[6:9]` 必须是裁剪后的 `cmd_raw`，不能填 `cmd_terrain`；`official_proprio` 中的 `last_action` 必须是上一拍教师输出的归一化 `a_norm`，不是关节角、轮速或已经 decode 的目标。
+
+教师高度扫描的单元值严格为：
+
+```text
+hit_z = base_z + 20.0 - ray_distance
+height[i] = clip(base_z - hit_z - 0.5, -1.0, 1.0)
+         = clip(ray_distance - 20.5, -1.0, 1.0)
+```
+
+射线起点的 `+20 m` 只是为了覆盖地形，不得把 20 m 作为观测偏置再次加入。只打开静态赛道 geom group，关闭机器人和 overlay group；无命中的单元保持 `-1.0`，并由 `privileged_hit_fraction` 记录质量。
+
+### 1.2 一条样本的完整时序
+
+```text
+MuJoCo 状态快照
+  -> 读取 base/link、关节状态和上一拍 a_norm
+  -> 计算 official_proprio[57]
+  -> 发射 1353 条 privileged vertical rays
+  -> 拼接 teacher_obs = [3 + 57 + 1353] = 1413
+  -> ONNX Runtime 输入 obs[1,1413]，得到 actions[1,16]
+  -> 同时保存 student_obs[441] 和 teacher_action_norm[16]
+  -> 将本拍 a_norm 更新为下一拍的 last_action
+  -> 仅在控制器中 decode 一次，并用 PD 跑 20 个 physics step
+  -> 在下一控制边界重复
+```
+
+`student_obs[441]` 使用同一状态附近最近一次比赛 LiDAR 编码的 `16×12` height 和 `16×12` validity；它不能由 1353 条 teacher 真值射线重采样得到。教师真值只用于产生动作标签，不能写入学生输入或最终学生 ONNX。
+
+### 1.3 采集前必须确认的模型身份
+
+`export_s10_teacher_onnx.py` 只接受 privileged teacher actor。导出前确认：
+
+- checkpoint 是冻结后的 S10 teacher，不是官方 57 维 policy，也不是学生 441 维网络；
+- actor 第一层输入为 `1413`，最后一层输出为 `16`；
+- checkpoint 没有需要外置的 observation normalizer，或 normalizer 已被明确封装进导出模型；
+- `teacher_action_norm` 仍是归一化动作，后续不得在数据集写入阶段 decode。
+
+如果输入维度不是 `1413`，立即停止；不要通过补零、截断或复制高度图“修正”维度。
+
 ## 2. 教师负责人需要交付什么
 
 最小交付包：
