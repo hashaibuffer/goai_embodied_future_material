@@ -18,13 +18,15 @@ from heightmap import build_heightmap, load_config as load_heightmap_config
 from mujoco_lidar import MujocoLidarScanner, load_lidar_yaml
 from mujoco_teacher import (
     JOINT_INIT_RAW, PrivilegedHeightScanner, assemble_official_57,
-    assemble_teacher_1413, decode_action_norm, published_targets_to_raw,
+    assemble_teacher_1413, decode_action_raw, published_targets_to_raw,
     run_stand_up, state_from_mujoco)
 
 DEFAULT_XML = ROOT / "models" / "mjcf" / "S10_track_lidar.xml"
 DEFAULT_LIDAR = ROOT / "configs" / "lidar.yaml"
 DEFAULT_HEIGHTMAP = ROOT / "configs" / "heightmap.yaml"
-ACTION_NORM_LIMIT = 1.0 + 1e-5
+# 与 Isaac 训练侧 RSL-RL clip_actions=100 对齐（rsl_rl vecenv_wrapper.step()）；
+# 不是 [-1,1] 的 a_norm 契约。见 doc/MUJOCO_ACTION_NORMALIZATION_FIX.md。
+ACTION_RAW_LIMIT = 100.0 + 1e-3
 
 
 class TeacherPolicy:
@@ -43,13 +45,14 @@ class TeacherPolicy:
     def __call__(self, obs):
         action = self.session.run(["actions"], {"obs": np.asarray(obs, np.float32)[None]})[0][0]
         if action.shape != (16,) or not np.isfinite(action).all():
-            raise RuntimeError("teacher returned an invalid normalized action")
+            raise RuntimeError("teacher returned an invalid action")
         max_abs = float(np.max(np.abs(action)))
-        if max_abs > ACTION_NORM_LIMIT:
+        if max_abs > ACTION_RAW_LIMIT:
             raise RuntimeError(
-                f"teacher output is not normalized: max_abs={max_abs:.6g} > 1; "
-                "re-export the PT with --action-postprocess clip --action-limit 1 "
-                "or --action-postprocess tanh")
+                f"teacher output exceeds the raw action safety limit: max_abs={max_abs:.6g} > "
+                f"{ACTION_RAW_LIMIT:.6g}; re-export with --action-postprocess clip "
+                "--action-limit 100 (matching Isaac clip_actions=100), or investigate why "
+                "the actor produced an out-of-distribution value")
         return action.astype(np.float32)
 
 
@@ -170,7 +173,7 @@ def main():
         if schedule.shape[1] != 4 or np.any(np.diff(schedule[:, 0]) < 0):
             raise ValueError("command schedule must be sorted CSV rows: start_sample,vx,vy,wz")
     last_action = np.zeros(16, np.float32)
-    goal_pos, goal_vel = decode_action_norm(last_action)
+    goal_pos, goal_vel = decode_action_raw(last_action)
     raw_pos, raw_vel = published_targets_to_raw(goal_pos, goal_vel)
     kp = np.asarray([80, 80, 80, 0] * 4, np.float32)
     kd = np.asarray([2, 2, 2, .6] * 4, np.float32)
@@ -201,12 +204,12 @@ def main():
             raise RuntimeError(f"student observation is {student_obs.shape}, expected (441,)")
         pose = np.concatenate([state.base_pos_w, data.xquat[base_id]]).astype(np.float32)
         recorder.append(
-            student_obs=student_obs, teacher_action_norm=action, command_raw=command,
+            student_obs=student_obs, teacher_action_raw=action, command_raw=command,
             waypoint_id=nearest_waypoint(state.base_pos_w, waypoints), terrain_id=args.terrain_id,
             episode_id=args.episode_id, step_id=sample, base_pose_wxyz=pose,
             privileged_hit_fraction=float(hit.mean()))
         last_action = action
-        goal_pos, goal_vel = decode_action_norm(action)
+        goal_pos, goal_vel = decode_action_raw(action)
         raw_pos, raw_vel = published_targets_to_raw(goal_pos, goal_vel)
         for _ in range(20):
             q, dq = data.qpos[7:23], data.qvel[6:22]

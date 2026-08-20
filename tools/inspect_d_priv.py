@@ -31,7 +31,7 @@ with np.load(args.path, allow_pickle=False) as data:
         "metadata": metadata,
         "fields": {name: {"shape": list(data[name].shape), "dtype": str(data[name].dtype)}
                    for name in data.files},
-        "action_abs_max": float(np.max(np.abs(data["teacher_action_norm"]))),
+        "action_abs_max": float(np.max(np.abs(data["teacher_action_raw"]))),
         "privileged_hit_fraction": {
             "min": float(np.min(data["privileged_hit_fraction"])),
             "mean": float(np.mean(data["privileged_hit_fraction"])),

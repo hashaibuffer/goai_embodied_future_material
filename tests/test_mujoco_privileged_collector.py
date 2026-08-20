@@ -11,7 +11,7 @@ from d_priv_dataset import DPrivRecorder, validate_d_priv
 from mujoco_lidar import MujocoLidarScanner
 from mujoco_teacher import (
     DEFAULT_ROBOT, JOINT_INIT_RAW, PrivilegedHeightScanner, S10PolicyState,
-    assemble_official_57, assemble_teacher_1413, decode_action_norm,
+    assemble_official_57, assemble_teacher_1413, decode_action_raw,
     run_stand_up, stand_up_target_raw)
 
 
@@ -64,7 +64,7 @@ def test_observation_and_action_contract_dimensions():
     assert proprio.shape == (57,)
     np.testing.assert_allclose(proprio[:9], [.25, -.1, .2, 0, 0, -1, .5, -.2, .3])
     assert assemble_teacher_1413(state, proprio, np.zeros(1353)).shape == (1413,)
-    goal_pos, goal_vel = decode_action_norm(np.zeros(16))
+    goal_pos, goal_vel = decode_action_raw(np.zeros(16))
     np.testing.assert_allclose(goal_pos[[0, 1, 2, 4, 5, 6]], [0, -.3, .6, 0, -.3, .6])
     np.testing.assert_allclose(goal_vel, 0)
 
@@ -72,7 +72,7 @@ def test_observation_and_action_contract_dimensions():
 def test_d_priv_roundtrip_and_fake_source(tmp_path):
     recorder = DPrivRecorder(teacher_model=None, teacher_source="fake_mujoco_smoke")
     recorder.append(
-        student_obs=np.zeros(441), teacher_action_norm=np.zeros(16), command_raw=np.zeros(3),
+        student_obs=np.zeros(441), teacher_action_raw=np.zeros(16), command_raw=np.zeros(3),
         waypoint_id=-1, terrain_id="plane", episode_id=0, step_id=0,
         base_pose_wxyz=[0, 0, .4, 1, 0, 0, 0], privileged_hit_fraction=1.0)
     path = recorder.write(tmp_path / "fake.npz")
@@ -141,7 +141,7 @@ def test_d_priv_write_returns_npz_path(tmp_path):
     """DPrivRecorder.write() 应返回实际存在的 .npz 文件路径。"""
     recorder = DPrivRecorder(teacher_model=None, teacher_source="test")
     recorder.append(
-        student_obs=np.zeros(441), teacher_action_norm=np.zeros(16),
+        student_obs=np.zeros(441), teacher_action_raw=np.zeros(16),
         command_raw=np.zeros(3), waypoint_id=0, terrain_id="test",
         episode_id=0, step_id=0, base_pose_wxyz=np.zeros(7),
         privileged_hit_fraction=1.0)

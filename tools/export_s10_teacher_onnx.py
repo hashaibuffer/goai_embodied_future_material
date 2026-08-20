@@ -10,7 +10,17 @@ from torch import nn
 
 
 class TeacherForExport(nn.Module):
-    """Expose the teacher with the action contract expected by MuJoCo."""
+    """Expose the teacher with the action contract expected by MuJoCo.
+
+    The MuJoCo/robot decoder (decode_action_raw / TerrainPolicyMath::DecodeAction)
+    applies action_scale_robot + default_pose_robot directly to this output; it does
+    NOT assume the output is normalized to [-1, 1]. Isaac training only clips the
+    actor's raw mean to clip_actions=100 before scaling (see rsl_rl vecenv_wrapper
+    and DeeproboticsS10RoughPPORunnerCfg.clip_actions). Clipping this export to
+    [-1, 1] flattens the actor's true action magnitude and destroys per-joint
+    differences (e.g. left/right knee) that matter for terrain climbing -- do not
+    use --action-limit 1 unless you have a specific reason to.
+    """
 
     def __init__(self, actor, postprocess, action_limit):
         super().__init__()
@@ -68,11 +78,11 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
         "--action-postprocess", choices=("clip", "tanh", "none"), default="clip",
-        help="postprocess actor mean inside ONNX (default: clip to [-1, 1])",
+        help="postprocess actor mean inside ONNX (default: clip to match Isaac clip_actions=100)",
     )
     parser.add_argument(
-        "--action-limit", type=float, default=1.0,
-        help="symmetric limit for --action-postprocess clip (default: 1.0)",
+        "--action-limit", type=float, default=100.0,
+        help="symmetric limit for --action-postprocess clip (default: 100.0, matching Isaac training)",
     )
     args = parser.parse_args()
     if args.action_limit <= 0:
@@ -85,16 +95,16 @@ def main():
         raise ValueError(
             f"not an S10 privileged teacher: actor is {first.in_features}->{last.out_features}, expected 1413->16")
     export_model = TeacherForExport(actor, args.action_postprocess, args.action_limit).eval()
-    # Fail before writing an unsafe graph. The MuJoCo decoder consumes a_norm.
+    # Fail before writing an unsafe graph. The MuJoCo decoder expects raw actor output (not strictly [-1,1]).
     probe = torch.randn(128, 1413)
     with torch.no_grad():
         probe_actions = export_model(probe)
     if not torch.isfinite(probe_actions).all():
         raise RuntimeError("exported actions contain non-finite values")
-    if float(probe_actions.abs().max()) > 1.0 + 1e-5:
+    if float(probe_actions.abs().max()) > args.action_limit + 1e-5:
         raise RuntimeError(
-            "exported actions exceed the MuJoCo a_norm range [-1, 1]; "
-            "use --action-postprocess clip --action-limit 1 or tanh")
+            f"exported actions exceed the specified limit [{-args.action_limit}, {args.action_limit}]; "
+            f"use --action-postprocess clip with appropriate --action-limit or tanh")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     torch.onnx.export(
         export_model, torch.zeros(1, 1413), args.output, opset_version=17,
@@ -126,8 +136,13 @@ def main():
         "action_postprocess": args.action_postprocess,
         "action_range": [
             -args.action_limit, args.action_limit
-        ] if args.action_postprocess == "clip" else [-1.0, 1.0],
-        "action_contract": "a_norm",
+        ] if args.action_postprocess == "clip" else None,
+        "action_contract": "raw",
+        "action_contract_note": (
+            "Actor mean scaled/offset by policy.yaml action_scale_robot + "
+            "default_pose_robot, matching Isaac clip_actions=100 (not a [-1,1] "
+            "normalized action). Downstream consumers must NOT assume |action|<=1."
+        ),
         "action_contract_adapter": args.action_postprocess != "none",
         "torch_onnx_parity": parity,
     }

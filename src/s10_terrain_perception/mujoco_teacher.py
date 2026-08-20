@@ -68,7 +68,7 @@ def state_from_mujoco(model, data, base_body_id) -> S10PolicyState:
         np.asarray(raw_vel, np.float32).copy())
 
 
-def assemble_official_57(state: S10PolicyState, command_raw, last_action_norm):
+def assemble_official_57(state: S10PolicyState, command_raw, last_action_raw):
     command = np.asarray(command_raw, np.float32).reshape(3)
     command = np.clip(command, [-1.0, -.6, -1.0], [1.0, .6, 1.0])
     joint_pos = state.joint_pos_robot[ROBOT_TO_POLICY].copy()
@@ -80,7 +80,7 @@ def assemble_official_57(state: S10PolicyState, command_raw, last_action_norm):
         command,
         joint_pos - DEFAULT_POLICY,
         joint_vel * .05,
-        np.asarray(last_action_norm, np.float32).reshape(16),
+        np.asarray(last_action_raw, np.float32).reshape(16),
     ]).astype(np.float32)
     if obs.shape != (57,) or not np.isfinite(obs).all():
         raise RuntimeError(f"invalid official proprio shape/value: {obs.shape}")
@@ -98,8 +98,18 @@ def assemble_teacher_1413(state, proprio_57, privileged_height):
     return obs
 
 
-def decode_action_norm(action_norm):
-    action = np.asarray(action_norm, np.float32).reshape(16)
+def decode_action_raw(action_raw):
+    """将策略原始动作解码为 MuJoCo 关节目标位置和速度。
+
+    注意：action_raw 是策略网络的原始输出（Isaac 训练时仅 clip 到 ±100，
+    不是归一化到 [-1,1] 的动作）。此函数直接套用 action_scale_robot +
+    default_pose_robot，与 Isaac Lab JointPositionAction/JointVelocityAction、
+    真机 TerrainPolicyMath::DecodeAction 的公式完全一致。历史误区：曾误认为
+    此处的 action 必须 ∈[-1,1]（因此字段名叫 action_norm），实际上 Isaac
+    训练时 clip_actions=100，真机 runner 也无 [-1,1] 裁剪，强行把策略原始
+    输出削平到 ±1 会丢失左右腿动作幅度差异，导致学生无法学会上台阶等复杂行为。
+    """
+    action = np.asarray(action_raw, np.float32).reshape(16)
     physical = action[POLICY_TO_ROBOT] * ACTION_SCALE_ROBOT + DEFAULT_ROBOT
     goal_pos = np.zeros(16, np.float32)
     goal_vel = np.zeros(16, np.float32)
@@ -162,8 +172,8 @@ def stand_up_target_raw():
     注意：DEFAULT_ROBOT 与 JOINT_INIT_RAW 同属 raw 空间（两者都是
     IK 直接算出的物理关节角，可用 GetHipYPosByHeight/GetKneePosByHeight
     核实：h=0.48 -> hipy=-0.284, knee=0.568，与 DEFAULT_ROBOT 的
-    [-0.3, 0.6] 吻合）。decode_action_norm/published_targets_to_raw 是
-    "策略输出 action_norm -> 目标关节角" 的运行时解码管线，只能作用于
+    [-0.3, 0.6] 吻合）。decode_action_raw/published_targets_to_raw 是
+    "策略输出 action_raw -> 目标关节角" 的运行时解码管线，只能作用于
     策略动作，不能套在静态的 DEFAULT_ROBOT 常量上，否则会被
     JOINT_DIR/POS_OFFSET_RAD 二次错误变换，导致目标超出 MJCF 关节限位
     （例如 hipy 会跳到 ±2.8rad，远超 ±2.53rad 硬限位）。

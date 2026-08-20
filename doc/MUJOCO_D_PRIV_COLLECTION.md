@@ -19,7 +19,7 @@
 ```text
 teacher_obs[1413] = base_lin_vel_body[3] + official_proprio[57] + privileged_height[1353]
 student_obs[441]  = official_proprio[57] + lidar_height[192] + validity[192]
-label[16]         = teacher ONNX 输出的归一化 a_norm，禁止提前 decode
+label[16]         = teacher ONNX 输出的原始动作 a_raw，禁止提前 decode
 ```
 
 教师高度扫描严格复现 Isaac Lab：
@@ -31,7 +31,14 @@ label[16]         = teacher ONNX 输出的归一化 a_norm，禁止提前 decode
 - 教师推理不加训练随机噪声。学生 384 维必须来自比赛 `4344` 线 MuJoCo LiDAR 和 `heightmap.py`，绝不能复制教师真值。
 
 控制周期：MuJoCo `0.001 s`，教师 `0.02 s`，学生 LiDAR `20 Hz`。动作顺序和 scale 与官方 runner 相同，decode 只在仿真控制器执行一次。
-ONNX 的 `actions` 必须是 `a_norm ∈ [-1,1]`；采集器不会为错误模型静默截断，超范围会立即失败。
+ONNX 的 `actions` 是教师 actor 的**原始动作**（`a_raw`），对齐 Isaac 训练侧 `clip_actions=100`；**不是** `[-1,1]` 归一化动作。采集器不会为异常大的输出静默截断，超过 `±100` 安全上限会立即失败。
+
+> 2026-08-20 更正：此前版本要求 `a_norm∈[-1,1]` 并在导出/采集时强制 clip 到 `±1`。
+> 交叉核对 Isaac `rsl_rl` `vecenv_wrapper.step()`（`clip_actions=100`）、S10 `rough_env_cfg.py`
+> 的 `JointPositionActionCfg(scale=..., clip=(-100,100))` 和真机 `terrain_policy_math.hpp::DecodeAction`
+> （无 `[-1,1]` 裁剪）后确认：`clip[-1,1]` 不是训练/真机契约的一部分，而是采集链路里凭空加上去的
+> 错误约束，会把左右腿等幅度差异（例如台阶动作里 knee 4.5 vs 3.3）削平成相同的 `±1`，导致学生
+> 学不到正确的差异化动作。现在字段名统一改为 `teacher_action_raw`，裁剪上限对齐 `clip_actions=100`。
 
 ### 1.1 每个控制周期如何组装 `teacher_obs[1413]`
 
@@ -40,10 +47,10 @@ ONNX 的 `actions` 必须是 `a_norm ∈ [-1,1]`；采集器不会为错误模�
 | 切片 | 维度 | 内容 | 处理规则 |
 | --- | ---: | --- | --- |
 | `obs[0:3]` | 3 | `base_lin_vel_body` | 从 MuJoCo `base_link` 的 body velocity 读取，保持 body frame，不能改成世界系 |
-| `obs[3:60]` | 57 | `official_proprio` | 与官方 runner 完全同序：`base_ang_vel*0.25`、投影重力、`cmd_raw`、16 维关节位置、16 维关节速度、上一拍 `a_norm[16]` |
+| `obs[3:60]` | 57 | `official_proprio` | 与官方 runner 完全同序：`base_ang_vel*0.25`、投影重力、`cmd_raw`、16 维关节位置、16 维关节速度、上一拍 `a_raw[16]` |
 | `obs[60:1413]` | 1353 | `privileged_height` | 41×33 个 yaw-only 垂直射线，按 y 外层、x 内层展平 |
 
-其中 `official_proprio[6:9]` 必须是裁剪后的 `cmd_raw`，不能填 `cmd_terrain`；`official_proprio` 中的 `last_action` 必须是上一拍教师输出的归一化 `a_norm`，不是关节角、轮速或已经 decode 的目标。
+其中 `official_proprio[6:9]` 必须是裁剪后的 `cmd_raw`，不能填 `cmd_terrain`；`official_proprio` 中的 `last_action` 必须是上一拍教师输出的原始动作 `a_raw`（未经 `[-1,1]` 归一化，与 `clip_actions=100` 同一空间），不是关节角、轮速或已经 decode 的目标。
 
 教师高度扫描的单元值严格为：
 
@@ -59,13 +66,13 @@ height[i] = clip(base_z - hit_z - 0.5, -1.0, 1.0)
 
 ```text
 MuJoCo 状态快照
-  -> 读取 base/link、关节状态和上一拍 a_norm
+  -> 读取 base/link、关节状态和上一拍 a_raw
   -> 计算 official_proprio[57]
   -> 发射 1353 条 privileged vertical rays
   -> 拼接 teacher_obs = [3 + 57 + 1353] = 1413
   -> ONNX Runtime 输入 obs[1,1413]，得到 actions[1,16]
-  -> 同时保存 student_obs[441] 和 teacher_action_norm[16]
-  -> 将本拍 a_norm 更新为下一拍的 last_action
+  -> 同时保存 student_obs[441] 和 teacher_action_raw[16]
+  -> 将本拍 a_raw 更新为下一拍的 last_action
   -> 仅在控制器中 decode 一次，并用 PD 跑 20 个 physics step
   -> 在下一控制边界重复
 ```
@@ -79,8 +86,8 @@ MuJoCo 状态快照
 - checkpoint 是冻结后的 S10 teacher，不是官方 57 维 policy，也不是学生 441 维网络；
 - actor 第一层输入为 `1413`，最后一层输出为 `16`；
 - checkpoint 没有需要外置的 observation normalizer，或 normalizer 已被明确封装进导出模型；
-- **确认动作后处理**：当前 RSL-RL Gaussian deterministic 输出是 actor 的原始均值，不是 `tanh`；S10 Isaac 环境入口的 `clip_actions=100` 也不是 MuJoCo 所需的 `a_norm` 范围。导出时必须使用 `--action-postprocess clip --action-limit 1`（或明确选择 `tanh`），把协议适配层封装进 ONNX；不能把原始均值直接当 `a_norm`。这一步会改变超出 `[-1,1]` 的动作，因而是 MuJoCo 合约适配，不等价于 Isaac 训练时的 `±100` 环境截断。
-- `teacher_action_norm` 仍是归一化动作，后续不得在数据集写入阶段 decode。
+- **确认动作后处理**：当前 RSL-RL Gaussian deterministic 输出是 actor 的原始均值，不是 `tanh`。这个原始均值就是 Isaac 训练/真机部署实际使用的动作空间：Isaac `rsl_rl` 入口按 `clip_actions=100` 截断，环境侧 `JointPositionActionCfg` 再乘 `action_scale_robot` 并叠加 `default_pose_robot`；真机 `terrain_policy_math.hpp::DecodeAction` 同样不做 `[-1,1]` 裁剪。因此导出时使用 `--action-postprocess clip --action-limit 100`，只做安全上限截断（对齐 Isaac `clip_actions=100`），**不得**再压缩到 `[-1,1]`，否则会把不同关节间的原始幅度差异（例如台阶动作里 knee 4.5 vs 3.3）削平成相同的边界值，导致学生学不到差异化动作。
+- `teacher_action_raw` 是未经 `[-1,1]` 归一化的教师原始动作（仅裁剪到 `±100` 安全上限），后续不得在数据集写入阶段 decode，也不得被下游代码误当作 `[-1,1]` 归一化值再次裁剪。
 
 如果输入维度不是 `1413`，立即停止；不要通过补零、截断或复制高度图“修正”维度。
 
@@ -99,7 +106,7 @@ MuJoCo 状态快照
 `scripts/collect_mujoco_d_priv.py` 在 `initialize()` 之后、正式采集循环之前，会调用 `mujoco_teacher.run_stand_up()`：
 
 - 起点：`JOINT_INIT_RAW`（与 `initialize()` 写入的坐姿一致）；
-- 终点：`mujoco_teacher.stand_up_target_raw()`，其值就是 `DEFAULT_ROBOT` 本身（**不经过** `decode_action_norm`/`published_targets_to_raw` 二次变换——`DEFAULT_ROBOT` 已经是 raw/MJCF 空间的物理关节角，可用 `GetHipYPosByHeight/GetKneePosByHeight` 逆运动学核实：`h=0.48 -> hipy=-0.284, knee=0.568`，与 `DEFAULT_ROBOT` 的 `[-0.3, 0.6]` 吻合；若再套一次 `JOINT_DIR/POS_OFFSET_RAD` 会把目标推出 MJCF 硬限位，例如 hipy 会跳到 `±2.83 rad`，超过 `±2.53 rad` 限位）；
+- 终点：`mujoco_teacher.stand_up_target_raw()`，其值就是 `DEFAULT_ROBOT` 本身（**不经过** `decode_action_raw`/`published_targets_to_raw` 二次变换——`DEFAULT_ROBOT` 已经是 raw/MJCF 空间的物理关节角，可用 `GetHipYPosByHeight/GetKneePosByHeight` 逆运动学核实：`h=0.48 -> hipy=-0.284, knee=0.568`，与 `DEFAULT_ROBOT` 的 `[-0.3, 0.6]` 吻合；若再套一次 `JOINT_DIR/POS_OFFSET_RAD` 会把目标推出 MJCF 硬限位，例如 hipy 会跳到 `±2.83 rad`，超过 `±2.53 rad` 限位）；
 - 时长/增益：`STAND_UP_DURATION_S=3.0s`，腿 `kp=120/kd=2`，轮 `kp=0/kd=0.6`，与 C++ `StandUpState`/`s10_control_parameters.cpp` 一致；
 - 三次样条插值位置和速度（复刻 `GetCubicSplinePos/GetCubicSplineVel`）；
 - 起立阶段不查询教师、不写任何 `D_priv` 样本，只做纯运动学 PD 收敛。
@@ -139,7 +146,7 @@ cd /path/to/goai_embodied_future_material
 python tools/export_s10_teacher_onnx.py \
   --checkpoint /absolute/path/model_N.pt \
   --output artifacts/teacher_model_N_1413.onnx \
-  --action-postprocess clip --action-limit 1
+  --action-postprocess clip --action-limit 100
 ```
 
 导出器会强制检查：
@@ -148,10 +155,10 @@ python tools/export_s10_teacher_onnx.py \
 - actor 输出必须是 `16`；
 - tensor 名必须导出为 `obs` / `actions`；
 - opset 17、batch 动态；
-- 在导出前用 128 条随机 `1413` 维输入检查输出有限且绝对值不超过 `1.00001`；
+- 在导出前用 128 条随机 `1413` 维输入检查输出有限且绝对值不超过 `--action-limit`（默认 `100`，对齐 Isaac `clip_actions=100`）；
 - 若环境有 `onnxruntime`，自动完成 3 条 probe 的 Torch/ONNX 数值对拍；
-- 同目录生成 `teacher_model_N_1413.onnx.json`，包含 PT/ONNX SHA256、后处理方式、动作范围和对拍最大误差。
-- 使用 `--action-postprocess none` 只用于诊断；对于当前 `model_43100.pt` 等原始 Gaussian 均值 checkpoint，导出会因动作超范围而失败，禁止进入采集。
+- 同目录生成 `teacher_model_N_1413.onnx.json`，包含 PT/ONNX SHA256、后处理方式、动作范围（`action_contract: "raw"`）和对拍最大误差。
+- `--action-postprocess none` 跳过安全裁剪，仅用于诊断，不得进入采集；`--action-limit` 只是一个安全上限截断（防止异常 checkpoint 输出发散），**不是** `[-1,1]` 归一化——导出的 `actions` 仍是教师原始动作幅度（`teacher_action_raw`），下游必须按原始幅度乘 `action_scale_robot` 解释。
 
 如果出现 `expected 1413->16`，拿到的是普通 57 维策略、错误 checkpoint 或教师观测配置发生了变化，禁止继续采集。
 
@@ -241,7 +248,7 @@ python3 tools/inspect_d_priv.py /tmp/D_priv_FAKE_SMOKE.npz
 必须看到：
 
 - `student_obs: [10,441]`；
-- `teacher_action_norm: [10,16]`；
+- `teacher_action_raw: [10,16]`；
 - `teacher_source=fake_mujoco_smoke`；
 - `metadata.labels_usable=false`；
 - `privileged_hit_fraction` 接近 1.0。
@@ -310,7 +317,7 @@ python3 scripts/collect_mujoco_d_priv.py \
 | 字段 | dtype / shape | 语义 |
 | --- | --- | --- |
 | `student_obs` | `float32 [N,441]` | 官方 57 + 比赛 LiDAR 高度/mask |
-| `teacher_action_norm` | `float32 [N,16]` | 未 decode 的教师动作 |
+| `teacher_action_raw` | `float32 [N,16]` | 教师原始动作（未 decode，未归一化到 `[-1,1]`，仅裁剪到 `±100`） |
 | `command_raw` | `float32 [N,3]` | 学生实际看到的命令，禁止 `cmd_terrain` |
 | `teacher_source` | string `[N]` | 真数据必须是 `privileged_mujoco` |
 | `waypoint_id` | `int32 [N]` | 最近赛道 waypoint，仅元数据 |
@@ -329,7 +336,7 @@ teacher_model_N_1413.onnx.json
 checkpoint 的 B2 验收记录
 ```
 
-TE 只读取 `student_obs` 和 `teacher_action_norm` 训练 `441->16`；其他字段用于分层采样、失败定位和防止混入假数据。交付前对每个 shard 执行 `tools/inspect_d_priv.py --require-training-labels FILE.npz`；该选项会拒绝 fake source 和 `labels_usable=false`。
+TE 只读取 `student_obs` 和 `teacher_action_raw` 训练 `441->16`；学生需要按教师同样的方式解释标签（乘一次 `action_scale_robot` 再叠加 `default_pose_robot`），不能假设标签已经在 `[-1,1]`。其他字段用于分层采样、失败定位和防止混入假数据。交付前对每个 shard 执行 `tools/inspect_d_priv.py --require-training-labels FILE.npz`；该选项会拒绝 fake source 和 `labels_usable=false`。
 
 ## 8. 性能与故障处理
 
