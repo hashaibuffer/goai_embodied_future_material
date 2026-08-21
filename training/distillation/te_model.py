@@ -21,27 +21,32 @@ class StudentConfig:
     terrain_hidden: tuple[int, ...] = (256, 128)
     fusion_hidden: tuple[int, ...] = (128,)
     flat_hidden: tuple[int, ...] = (256, 128)
+    gate_hidden: tuple[int, ...] = (256, 128)
     activation: str = "elu"
     normalization_clip: float = 10.0
 
     def __post_init__(self) -> None:
         if self.controller not in {"learned", "proprio_clone"}:
             raise ValueError("controller must be learned or proprio_clone")
-        if self.architecture not in {"branch", "flat"}:
-            raise ValueError("architecture must be branch or flat")
+        if self.architecture not in {"branch", "flat", "gated_ensemble"}:
+            raise ValueError("architecture must be branch, flat, or gated_ensemble")
         if self.normalization_clip <= 0:
             raise ValueError("normalization_clip must be positive")
 
     def to_dict(self) -> dict:
         value = asdict(self)
-        for name in ("proprio_hidden", "terrain_hidden", "fusion_hidden", "flat_hidden"):
+        for name in (
+                "proprio_hidden", "terrain_hidden", "fusion_hidden", "flat_hidden",
+                "gate_hidden"):
             value[name] = list(value[name])
         return value
 
     @classmethod
     def from_dict(cls, value: dict) -> "StudentConfig":
         value = dict(value)
-        for name in ("proprio_hidden", "terrain_hidden", "fusion_hidden", "flat_hidden"):
+        for name in (
+                "proprio_hidden", "terrain_hidden", "fusion_hidden", "flat_hidden",
+                "gate_hidden"):
             if name in value:
                 value[name] = tuple(map(int, value[name]))
         return cls(**value)
@@ -100,6 +105,13 @@ class StudentPolicy(nn.Module):
         elif config.architecture == "flat":
             self.flat_policy = _mlp(
                 OBS_DIM, config.flat_hidden, ACTION_DIM, config.activation)
+        elif config.architecture == "gated_ensemble":
+            self.primary_policy = _mlp(
+                OBS_DIM, config.flat_hidden, ACTION_DIM, config.activation)
+            self.recovery_policy = _mlp(
+                OBS_DIM, config.flat_hidden, ACTION_DIM, config.activation)
+            self.gate = _mlp(
+                OBS_DIM, config.gate_hidden, 1, config.activation)
         else:
             proprio_out = config.proprio_hidden[-1]
             terrain_out = config.terrain_hidden[-1]
@@ -118,24 +130,39 @@ class StudentPolicy(nn.Module):
                 config.activation,
             )
 
-    def forward(self, observations: torch.Tensor) -> torch.Tensor:
+    def _prepare(self, observations: torch.Tensor) -> torch.Tensor:
         if (not torch.jit.is_tracing()
                 and (observations.ndim != 2 or observations.shape[-1] != OBS_DIM)):
             raise ValueError(f"student input must be [batch,{OBS_DIM}]")
         normalized = (observations - self.input_mean) / self.input_std
         prepared = torch.where(
             self.input_normalized, normalized, observations)
-        normalized = torch.clamp(
+        return torch.clamp(
             prepared * self.input_active,
             min=-self.config.normalization_clip,
             max=self.config.normalization_clip,
         )
+
+    def gate_logits(self, observations: torch.Tensor) -> torch.Tensor:
+        if (self.config.controller != "learned"
+                or self.config.architecture != "gated_ensemble"):
+            raise ValueError("gate logits require the gated_ensemble architecture")
+        normalized = self._prepare(observations)
+        return self.gate(normalized)
+
+    def forward(self, observations: torch.Tensor) -> torch.Tensor:
+        normalized = self._prepare(observations)
         if self.config.controller == "proprio_clone":
             # The ONNX signature remains 441-D, but terrain can never influence
             # this separately trained fallback model.
             return self.proprio_clone(normalized[:, :PROPRIO_DIM])
         if self.config.architecture == "flat":
             return self.flat_policy(normalized)
+        if self.config.architecture == "gated_ensemble":
+            primary = self.primary_policy(normalized)
+            recovery = self.recovery_policy(normalized)
+            logits = self.gate(normalized)
+            return torch.where(logits > 0.0, recovery, primary)
         proprio = self.proprio_encoder(normalized[:, :PROPRIO_DIM])
         terrain = self.terrain_encoder(normalized[:, PROPRIO_DIM:])
         return self.fusion(torch.cat((proprio, terrain), dim=-1))

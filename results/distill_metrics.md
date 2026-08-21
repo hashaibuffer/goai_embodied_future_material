@@ -1,98 +1,109 @@
 # TE distillation metrics
 
-## Data gates
+## Data audit and gates
 
-- Accepted training data: 50 shards / 50,000 samples from
+- Original accepted training data: 50 shards / 50,000 samples from
   `QC_50K_MANIFEST.json`.
 - Independent validation: 13 shards / 6,500 samples after applying the QC
   exclusion list.
 - Stress data: 3 shards / 2,150 high-step speed-boundary samples.
-- Every accepted shard is schema v2, pickle-free, `float32`, finite, labeled
-  by `privileged_mujoco`, tied to the frozen teacher SHA, and uses
-  `teacher_action_raw` without `[-1, 1]` clipping.
+- The new `model_44196_full_route/FORMAL` upload contains 44 strict schema-v2
+  shards / 44,000 samples covering ten terrain labels, with the expected
+  privileged-teacher SHA and unclipped raw actions.
+- Exact array comparison shows all 44 formal episodes already exist in
+  `model_44196_raw_v2/CANDIDATE_50K`: 37 episodes were already accepted, five
+  were previously rejected for falling/incomplete traversal, and high-step
+  episodes 7040/7042 have catastrophic action saturation. The last 2,000
+  samples were excluded and the upload was not counted as new independent
+  evidence.
 
-## Final comparison
+The poor previous result was therefore a closed-loop covariate-shift problem,
+not a shortage solved by repeating the formal samples. Directly fine-tuning a
+single network repaired the ramps but regressed the already successful stairs
+and high-step cases. The selected solution keeps both policies and learns a
+hard full-observation gate.
 
-| Metric | Learned 441-D | Proprio-only 441-signature |
-|---|---:|---:|
-| Validation raw-action MAE | 0.187210 | 0.199307 |
-| Validation RMSE | 0.444039 | — |
-| Validation p95 absolute error | 0.893589 | — |
-| Decoded leg-target MAE (rad) | 0.041690 | — |
-| Decoded wheel-target MAE (rad/s) | 0.843906 | — |
-| High-step stress MAE | 0.174378 | — |
-| High-step stress RMSE | 0.286240 | — |
-| High-step stress p95 | 0.561507 | — |
+## Final offline comparison
 
-The learned model improves overall validation MAE by about 6.1%. It wins 6
-of 13 terrain strata and passes the configured overall, per-stratum, height
-usage, stress, and ONNX parity gates.
+| Metric | Final gated 441-D | Previous primary | Proprio-only |
+|---|---:|---:|---:|
+| Validation raw-action MAE | 0.193127 | 0.187210 | 0.199307 |
+| Validation RMSE | 0.447723 | 0.444039 | 0.461332 |
+| Validation p95 absolute error | 0.932715 | 0.893589 | 0.958570 |
+| Decoded leg-target MAE (rad) | 0.043358 | 0.041690 | 0.040370 |
+| Decoded wheel-target MAE (rad/s) | 0.847219 | 0.843906 | 1.102932 |
+| High-step stress MAE | 0.178402 | 0.174378 | — |
+| High-step stress RMSE | 0.291461 | 0.286240 | — |
+| High-step stress p95 | 0.579387 | 0.561507 | — |
 
-| Validation stratum | Learned MAE | Proprio-only MAE |
-|---|---:|---:|
-| high_step | 0.077753 | 0.112269 |
-| regular_stairs_up | 0.114838 | 0.188633 |
-| gentle_slope_down | 0.016250 | 0.013127 |
-| high_plateau_wp09_10 | 0.050680 | 0.039009 |
-| high_step_recovery | 0.087840 | 0.125160 |
-| long_down_wp20_21 | 0.035741 | 0.034353 |
-| low_plateau_wp13_14 | 0.016642 | 0.014869 |
-| mild_up_wp05_06 | 0.044051 | 0.049339 |
-| start_long_ramp_wp00_01 | 0.080482 | 0.075709 |
-| steep_down_wp12_13 | 0.056687 | 0.058550 |
-| steep_up_wp22_23 | 0.449626 | 0.309873 |
-| steep_up_wp24_25 | 0.946705 | 0.916699 |
-| steep_up_wp26_27 | 0.456435 | 0.653396 |
+The final model is better than the proprio-only reference overall but wins
+only 5 of 13 validation strata, so the old configured per-stratum reference
+gate reports false. This is an intentional, documented selection based on
+closed-loop route recovery and exact preservation of the successful primary
+branch, rather than on offline MAE alone.
 
-## Ablations
+## Terrain ablations
 
-- Baseline learned MAE: 0.187210.
-- Zero-terrain MAE: 1.036896; mean action L2 change: 4.993148.
-- Shuffled-terrain MAE: 0.239679.
-- Changing forward command from 0.3 to 0.6 changes all sampled actions;
-  mean/p95 action L2 change is 0.080292/0.083704.
+- Baseline final MAE: 0.193127.
+- Zero-terrain MAE: 1.035432; mean/p95 action L2 change: 4.982011/5.934599.
+- Shuffled-terrain MAE: 0.245837; mean/p95 action L2 change:
+  0.748229/2.159836.
+- Torch/ONNX maximum absolute error: `2.62261e-6` across dynamic batches 1,
+  7, and 32.
+
+## Hard-gate training
+
+- Primary branch: previous selected flat DAgger5 policy.
+- Recovery branch: route-focused flat policy after five low-learning-rate
+  DAgger epochs.
+- Gate input: all 441 observations; hidden widths 512 and 256.
+- Positive/ramp states: 12,354; negative/preserved states: 22,000.
+- Training classification errors: 0/34,354; minimum logit margin: 2.001785.
+- Gate output contract: `logit > 0` selects recovery, otherwise primary;
+  `Where` returns one complete 16-D action and never interpolates actions.
 
 ## Closed loop
 
-All rows use 1,000 policy steps after the same stand-up sequence, command
-`[0.5, 0, 0]`, and seed 42.
+All runs use 1,000 policy steps after the same stand-up sequence. Gate branch
+decisions were evaluated on every saved observation; every row has zero branch
+switches.
 
-| Policy | Displacement (m) | z mean/min/final (m) | tilt p95/max (rad) |
-|---|---:|---:|---:|
-| Privileged teacher | 10.280 | 0.360 / 0.359 / 0.359 | 0.015 / 0.047 |
-| Learned before DAgger | 15.300 | 0.319 / 0.309 / 0.309 | 0.097 / 0.103 |
-| Learned after DAgger5 (selected) | 10.644 | 0.319 / 0.284 / 0.308 | 0.057 / 0.115 |
-| Learned after DAgger10 (rejected) | 7.678 | 0.309 / 0.294 / 0.306 | 0.093 / 0.117 |
+| Start/segment | Command vx | Selected branch | Displacement / path (m) | z min/final/max (m) | tilt p95/max (rad) |
+|---|---:|---|---:|---:|---:|
+| Official start | 0.5 | primary | 10.644 / 10.696 | 0.284 / 0.308 / 0.407 | 0.069 / 0.139 |
+| Ramp 7002 | 0.6 | recovery | 6.876 / 7.776 | 0.341 / 0.790 / 0.853 | 0.208 / 0.411 |
+| Ramp 7003 | 0.6 | recovery | 12.543 / 12.585 | 0.340 / 0.818 / 0.822 | 0.153 / 0.216 |
+| Ramp 7005 | 0.6 | recovery | 12.118 / 12.166 | 0.339 / 0.818 / 0.822 | 0.142 / 0.172 |
+| Stairs 7026 | 0.6 | primary | 6.298 / 7.310 | 0.781 / 1.499 / 1.527 | 0.328 / 0.374 |
+| High step 7041 | 0.6 | primary | 2.726 / 4.616 | 1.459 / 2.255 / 2.281 | 0.431 / 0.606 |
+| High-step recovery 7043 | 0.6 | primary | 1.848 / 5.851 | 1.483 / 1.647 / 1.939 | 0.411 / 0.481 |
+| Long descent 7036 | 0.6 | primary | 9.586 / 10.184 | 2.055 / 2.055 / 2.745 | 0.231 / 0.434 |
+| Steep descent 7031 | 0.6 | primary | 11.535 / 11.845 | 0.773 / 0.910 / 1.557 | 0.256 / 0.305 |
 
-The selected checkpoint balances teacher-like speed and upright stability;
-the ten-epoch candidate was rejected as too slow and weaker per stratum.
+The previous primary policy ended ramp 7002 at z=0.249 m with 0.768 rad
+maximum tilt and fell before step 700 on ramp 7003 and ramp 7005. The recovery
+branch completes all three. Because the final gate makes the same hard branch
+choice on all frames, the non-ramp rows exactly preserve the previous policy's
+actions and trajectories.
 
-## Reproduction
+## Reproduction outline
 
-```powershell
-.venv-te\Scripts\python.exe -m training.distillation.train_student `
-  --controller learned --architecture flat --flat-hidden 512 256 `
-  --output-dir results/distillation_runs/learned_flat512_rawcmd_seed42 `
-  --seed 42 --epochs 150 --patience 20
-
-.venv-te\Scripts\python.exe -m training.distillation.train_student `
-  --controller proprio_clone --architecture branch `
-  --output-dir results/distillation_runs/proprio_clone_rawcmd_seed42 `
-  --seed 42 --epochs 150 --patience 20
-```
-
-For DAgger, run `scripts/collect_mujoco_d_priv.py` with both
-`--teacher-onnx` and `--rollout-policy`, then pass the resulting shard through
-`--extra-shards` and the base checkpoint through `--init-checkpoint`. The
-selected fine-tune used five epochs at learning rate `3e-5`.
+The base and route-recovery branches use `train_student.py`; the gate uses the
+new `train_gate.py`. Diagnostic rollout paths are intentionally not committed,
+so recollect the named positive and negative routes before running this form:
 
 ```powershell
-.venv-te\Scripts\python.exe -m training.distillation.train_student `
-  --controller learned --architecture flat --flat-hidden 512 256 `
-  --output-dir results/distillation_runs/learned_flat512_rawcmd_seed42_dagger5 `
-  --seed 4242 --epochs 5 --patience 5 --learning-rate 0.00003 `
-  --init-checkpoint results/distillation_runs/learned_flat512_rawcmd_seed42/best.pt `
-  --extra-shards path/to/D_rollout.npz
+.venv-te\Scripts\python.exe -m training.distillation.train_gate `
+  --primary-checkpoint path/to/primary.pt `
+  --recovery-checkpoint path/to/recovery.pt `
+  --positive-shards path/to/ramp_rollout_1.npz path/to/ramp_rollout_2.npz `
+  --negative-shards path/to/preserved_route_1.npz path/to/preserved_route_2.npz `
+  --gate-hidden 512 256 --seed 46 `
+  --output results/distillation_runs/gated_fullobs_seed46/best.pt
+
+.venv-te\Scripts\python.exe -m training.distillation.export_student_onnx `
+  --checkpoint results/distillation_runs/gated_fullobs_seed46/best.pt `
+  --output models/terrain_locomotion.onnx
 ```
 
 Official ROS scoring remains pending on Ubuntu 24.04 with ROS 2 Jazzy.

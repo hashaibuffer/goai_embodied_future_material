@@ -99,6 +99,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--init-checkpoint", type=Path,
         help="Fine-tune from a student checkpoint while preserving its input statistics")
+    parser.add_argument(
+        "--preserve-checkpoint", type=Path,
+        help=("Frozen student whose outputs are retained on --preserve-shards "
+              "while fine-tuning on new teacher labels"))
+    parser.add_argument(
+        "--preserve-shards", nargs="*", type=Path, default=[],
+        help="Strict schema-v2 rollout shards used for behavior preservation")
+    parser.add_argument(
+        "--preserve-weight", type=float, default=0.0,
+        help="Weight of MSE to the frozen policy on preservation states")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--patience", type=int, default=10)
@@ -129,6 +139,16 @@ def main() -> None:
         raise SystemExit("--flat-hidden widths must be positive")
     if not 0.1 <= args.gpu_memory_fraction <= 0.95:
         raise SystemExit("gpu-memory-fraction must be in [0.1, 0.95]")
+    if args.preserve_weight < 0:
+        raise SystemExit("preserve-weight cannot be negative")
+    preserve_requested = args.preserve_checkpoint is not None
+    if preserve_requested != bool(args.preserve_shards) or (
+            preserve_requested and args.preserve_weight <= 0):
+        raise SystemExit(
+            "behavior preservation requires --preserve-checkpoint, one or more "
+            "--preserve-shards, and a positive --preserve-weight")
+    if not preserve_requested and args.preserve_weight != 0:
+        raise SystemExit("preserve-weight requires behavior preservation inputs")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     seed_everything(args.seed)
     device = choose_device(args.device)
@@ -171,6 +191,20 @@ def main() -> None:
     else:
         statistics = compute_input_statistics(train.observations)
         model = StudentPolicy(config, statistics).to(device)
+    preserve_model = None
+    preserve = None
+    if preserve_requested:
+        preserve_model, _, _ = load_checkpoint(
+            args.preserve_checkpoint, map_location="cpu")
+        if preserve_model.config != config:
+            raise ValueError(
+                "preservation checkpoint architecture does not match the candidate")
+        preserve_model = preserve_model.to(device).eval()
+        preserve_model.requires_grad_(False)
+        preserve = load_shards(
+            [ShardSpec(path=path) for path in args.preserve_shards],
+            expected_teacher_sha256=teacher_sha256,
+        )
     loss_fn = nn.SmoothL1Loss(beta=args.smooth_l1_beta)
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
@@ -191,6 +225,14 @@ def main() -> None:
     }
     train_loader = DataLoader(train_dataset, sampler=sampler, **loader_options)
     validation_loader = DataLoader(validation_dataset, shuffle=False, **loader_options)
+    preserve_loader = None
+    if preserve is not None:
+        preserve_loader = DataLoader(
+            TensorDataset(torch.from_numpy(preserve.observations)),
+            shuffle=True,
+            generator=torch.Generator().manual_seed(args.seed + 1),
+            **loader_options,
+        )
 
     training_metadata = {
         "controller": args.controller,
@@ -207,6 +249,18 @@ def main() -> None:
             str(args.init_checkpoint.resolve()) if args.init_checkpoint else None),
         "init_checkpoint_sha256": (
             sha256_file(args.init_checkpoint) if args.init_checkpoint else None),
+        "preserve_checkpoint": (
+            str(args.preserve_checkpoint.resolve())
+            if args.preserve_checkpoint else None),
+        "preserve_checkpoint_sha256": (
+            sha256_file(args.preserve_checkpoint)
+            if args.preserve_checkpoint else None),
+        "preserve_shards": [
+            {"path": str(path.resolve()), "sha256": sha256_file(path)}
+            for path in args.preserve_shards
+        ],
+        "preserve_samples": len(preserve) if preserve is not None else 0,
+        "preserve_weight": args.preserve_weight,
         "train_samples": len(train),
         "validation_samples": len(validation),
         "train_terrain_samples": dict(sorted(Counter(map(str, train.terrains)).items())),
@@ -237,6 +291,8 @@ def main() -> None:
         initial_record = {
             "epoch": 0,
             "train_smooth_l1": None,
+            "train_objective": None,
+            "train_preservation_mse": None,
             "validation_smooth_l1": initial_smooth_l1,
             "validation_mae": initial_mae,
             "learning_rate": float(optimizer.param_groups[0]["lr"]),
@@ -256,20 +312,43 @@ def main() -> None:
         )
     for epoch in range(1, args.epochs + 1):
         model.train()
-        train_loss_total = 0.0
+        train_loss_total = train_objective_total = 0.0
+        preservation_total = 0.0
+        preservation_batches = 0
         train_samples = 0
+        preserve_iterator = iter(preserve_loader) if preserve_loader is not None else None
         for observations, actions in train_loader:
             observations = observations.to(device, non_blocking=True)
             actions = actions.to(device, non_blocking=True)
             optimizer.zero_grad(set_to_none=True)
             prediction = model(observations)
-            loss = loss_fn(prediction, actions)
+            imitation_loss = loss_fn(prediction, actions)
+            loss = imitation_loss
+            preservation_loss = None
+            if preserve_iterator is not None:
+                try:
+                    (preserve_observations,) = next(preserve_iterator)
+                except StopIteration:
+                    preserve_iterator = iter(preserve_loader)
+                    (preserve_observations,) = next(preserve_iterator)
+                preserve_observations = preserve_observations.to(
+                    device, non_blocking=True)
+                with torch.no_grad():
+                    preserve_target = preserve_model(preserve_observations)
+                preserve_prediction = model(preserve_observations)
+                preservation_loss = torch.mean(torch.square(
+                    preserve_prediction - preserve_target))
+                loss = loss + args.preserve_weight * preservation_loss
             if not torch.isfinite(loss):
                 raise RuntimeError("training produced a non-finite loss")
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
             optimizer.step()
-            train_loss_total += float(loss.detach()) * len(observations)
+            train_loss_total += float(imitation_loss.detach()) * len(observations)
+            train_objective_total += float(loss.detach()) * len(observations)
+            if preservation_loss is not None:
+                preservation_total += float(preservation_loss.detach())
+                preservation_batches += 1
             train_samples += len(observations)
         validation_smooth_l1, validation_mae = validation_loss(
             model, validation_loader, loss_fn, device)
@@ -277,6 +356,10 @@ def main() -> None:
         record = {
             "epoch": epoch,
             "train_smooth_l1": train_loss_total / train_samples,
+            "train_objective": train_objective_total / train_samples,
+            "train_preservation_mse": (
+                preservation_total / preservation_batches
+                if preservation_batches else None),
             "validation_smooth_l1": validation_smooth_l1,
             "validation_mae": validation_mae,
             "learning_rate": learning_rate,

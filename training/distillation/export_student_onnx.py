@@ -36,12 +36,17 @@ def portable_training_metadata(metadata: dict) -> dict:
     if "training_manifest" in result:
         result["training_manifest"] = portable_artifact_path(
             result["training_manifest"])
-    if "init_checkpoint" in result:
-        result["init_checkpoint"] = portable_artifact_path(
-            result["init_checkpoint"])
-    for shard in result.get("extra_shards", []):
-        if "path" in shard:
-            shard["path"] = portable_artifact_path(shard["path"])
+    for field in (
+            "init_checkpoint", "preserve_checkpoint", "primary_checkpoint",
+            "recovery_checkpoint"):
+        if result.get(field):
+            result[field] = portable_artifact_path(result[field])
+    for collection in (
+            "extra_shards", "preserve_shards", "positive_shards",
+            "negative_shards"):
+        for shard in result.get(collection, []):
+            if "path" in shard:
+                shard["path"] = portable_artifact_path(shard["path"])
     return result
 
 

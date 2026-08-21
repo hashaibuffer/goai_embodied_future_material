@@ -24,7 +24,7 @@ def statistics():
     )
 
 
-@pytest.mark.parametrize("architecture", ["branch", "flat"])
+@pytest.mark.parametrize("architecture", ["branch", "flat", "gated_ensemble"])
 def test_learned_student_has_frozen_io_shape(architecture):
     model = StudentPolicy(
         StudentConfig(controller="learned", architecture=architecture), statistics())
@@ -75,6 +75,22 @@ def test_command_slots_remain_active_raw_values():
         assert not np.array_equal(model(baseline).numpy(), model(command).numpy())
 
 
+def test_gated_ensemble_hard_selects_one_policy_without_blending():
+    model = StudentPolicy(
+        StudentConfig(architecture="gated_ensemble"), statistics()).eval()
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.zero_()
+        model.primary_policy[-1].bias.fill_(1.0)
+        model.recovery_policy[-1].bias.fill_(2.0)
+        model.gate[-1].bias.fill_(-1.0)
+        np.testing.assert_array_equal(
+            model(torch.zeros(2, 441)).numpy(), np.ones((2, 16), np.float32))
+        model.gate[-1].bias.fill_(1.0)
+        np.testing.assert_array_equal(
+            model(torch.zeros(2, 441)).numpy(), np.full((2, 16), 2.0, np.float32))
+
+
 def test_export_metadata_does_not_publish_machine_specific_paths():
     root = Path(__file__).resolve().parents[1]
     checkpoint = root / "results" / "distillation_runs" / "run" / "best.pt"
@@ -82,6 +98,15 @@ def test_export_metadata_does_not_publish_machine_specific_paths():
         "training_manifest": root / "results" / "datasets" / "manifest.json",
         "init_checkpoint": checkpoint,
         "extra_shards": [{"path": root / "results" / "dagger.npz", "sha256": "x"}],
+        "preserve_checkpoint": checkpoint,
+        "preserve_shards": [
+            {"path": root / "results" / "preserve.npz", "sha256": "y"}],
+        "primary_checkpoint": checkpoint,
+        "recovery_checkpoint": checkpoint,
+        "positive_shards": [
+            {"path": root / "results" / "positive.npz", "sha256": "z"}],
+        "negative_shards": [
+            {"path": root / "results" / "negative.npz", "sha256": "w"}],
     }
     portable = portable_training_metadata(metadata)
     assert portable_artifact_path(checkpoint) == (
@@ -89,4 +114,18 @@ def test_export_metadata_does_not_publish_machine_specific_paths():
     assert portable["training_manifest"] == "results/datasets/manifest.json"
     assert portable["init_checkpoint"] == "results/distillation_runs/run/best.pt"
     assert portable["extra_shards"][0]["path"] == "results/dagger.npz"
+    assert portable["preserve_checkpoint"] == "results/distillation_runs/run/best.pt"
+    assert portable["preserve_shards"][0]["path"] == "results/preserve.npz"
+    assert portable["primary_checkpoint"] == "results/distillation_runs/run/best.pt"
+    assert portable["recovery_checkpoint"] == "results/distillation_runs/run/best.pt"
+    assert portable["positive_shards"][0]["path"] == "results/positive.npz"
+    assert portable["negative_shards"][0]["path"] == "results/negative.npz"
     assert str(root) not in str(portable)
+
+
+def test_export_metadata_preserves_empty_optional_checkpoint_paths():
+    portable = portable_training_metadata({
+        "init_checkpoint": None,
+        "preserve_checkpoint": None,
+    })
+    assert portable == {"init_checkpoint": None, "preserve_checkpoint": None}
