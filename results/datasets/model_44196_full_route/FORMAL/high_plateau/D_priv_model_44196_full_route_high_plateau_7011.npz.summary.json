@@ -1,0 +1,7 @@
+{
+  "labels_usable": true,
+  "output": "/home/hashvr/goai_embodied_future_material_codex_te/results/datasets/model_44196_full_route/FORMAL/high_plateau/D_priv_model_44196_full_route_high_plateau_7011.npz",
+  "rollout_policy": null,
+  "samples": 1000,
+  "teacher": "/home/hashvr/goai_embodied_future_material_codex_te/artifacts/teacher_model_44196_1413_raw100.onnx"
+}
