@@ -1,0 +1,881 @@
+{
+  "coverage": {
+    "categories": {
+      "dagger_failure_boundary": 2,
+      "dagger_success": 14,
+      "teacher_demo": 16
+    },
+    "command_max": [
+      0.5,
+      0.20000000298023224,
+      0.6000000238418579
+    ],
+    "command_min": [
+      0.0,
+      -0.20000000298023224,
+      -0.6000000238418579
+    ],
+    "course_families": [
+      "yaw",
+      "arc",
+      "switchback",
+      "turn_then_go",
+      "lateral"
+    ],
+    "locations": [
+      "official",
+      "high_plateau",
+      "low_plateau"
+    ]
+  },
+  "dataset": "model_44196_turning_v2",
+  "entries": [
+    {
+      "base_z_final": 0.7899351716041565,
+      "base_z_min": 0.6818950176239014,
+      "behavior_policy": "student_onnx",
+      "behavior_sha256": "edc785e9c2859ddbfb0622aea7785e679bc8fa231fccac12b1ffe7569f99589e",
+      "category": "dagger_success",
+      "command_max": [
+        0.5,
+        0.0,
+        0.6000000238418579
+      ],
+      "command_min": [
+        0.20000000298023224,
+        0.0,
+        0.0
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/dagger/D_priv_turnv2_arc_left_low_plateau_dagger_8410.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "72aacba9d8d80383f12ed1c3ddd49879d11022ee5e6b667dc1093cdf32921c2b",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_arc_left_low_plateau_dagger",
+      "tilt_max_rad": 1.0101213455200195
+    },
+    {
+      "base_z_final": 0.08052372932434082,
+      "base_z_min": 0.0800686776638031,
+      "behavior_policy": "student_onnx",
+      "behavior_sha256": "edc785e9c2859ddbfb0622aea7785e679bc8fa231fccac12b1ffe7569f99589e",
+      "category": "dagger_failure_boundary",
+      "command_max": [
+        0.44999998807907104,
+        0.0,
+        0.6000000238418579
+      ],
+      "command_min": [
+        0.20000000298023224,
+        0.0,
+        0.0
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/dagger/D_priv_turnv2_arc_left_official_dagger_8412.npz",
+      "samples": 693,
+      "schema_version": 2,
+      "sha256": "697c67735f007654452eb20c323e591de6eec3c5e74666229db29b7671b168f0",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_arc_left_official_dagger",
+      "tilt_max_rad": 3.1377480030059814
+    },
+    {
+      "base_z_final": 1.2354978322982788,
+      "base_z_min": 1.2334449291229248,
+      "behavior_policy": "student_onnx",
+      "behavior_sha256": "edc785e9c2859ddbfb0622aea7785e679bc8fa231fccac12b1ffe7569f99589e",
+      "category": "dagger_success",
+      "command_max": [
+        0.5,
+        0.0,
+        0.0
+      ],
+      "command_min": [
+        0.20000000298023224,
+        0.0,
+        -0.6000000238418579
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/dagger/D_priv_turnv2_arc_right_high_plateau_dagger_8416.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "6b5186975e31b37358b2f0d63a394454f138dfd2d63f83ec16dd8229e9d6f93a",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_arc_right_high_plateau_dagger",
+      "tilt_max_rad": 3.140746831893921
+    },
+    {
+      "base_z_final": 0.3508737087249756,
+      "base_z_min": 0.23179727792739868,
+      "behavior_policy": "student_onnx",
+      "behavior_sha256": "edc785e9c2859ddbfb0622aea7785e679bc8fa231fccac12b1ffe7569f99589e",
+      "category": "dagger_success",
+      "command_max": [
+        0.5,
+        0.0,
+        0.0
+      ],
+      "command_min": [
+        0.20000000298023224,
+        0.0,
+        -0.6000000238418579
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/dagger/D_priv_turnv2_arc_right_official_dagger_8414.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "fd3eda79acdc1fa6be0766b6df8b412eb675cb14b3c7ebbc16c8e4088dbcb1bd",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_arc_right_official_dagger",
+      "tilt_max_rad": 0.3064706027507782
+    },
+    {
+      "base_z_final": 1.454202651977539,
+      "base_z_min": 1.4056693315505981,
+      "behavior_policy": "student_onnx",
+      "behavior_sha256": "edc785e9c2859ddbfb0622aea7785e679bc8fa231fccac12b1ffe7569f99589e",
+      "category": "dagger_success",
+      "command_max": [
+        0.4000000059604645,
+        0.20000000298023224,
+        0.44999998807907104
+      ],
+      "command_min": [
+        0.20000000298023224,
+        -0.10000000149011612,
+        -0.15000000596046448
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/dagger/D_priv_turnv2_lateral_left_high_plateau_dagger_8428.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "507a2f5943b8259f0ad51572a31514db2053ed6b01a95b4d56a1bf1dac3c2609",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_lateral_left_high_plateau_dagger",
+      "tilt_max_rad": 0.39961016178131104
+    },
+    {
+      "base_z_final": 0.2636217176914215,
+      "base_z_min": 0.25939977169036865,
+      "behavior_policy": "student_onnx",
+      "behavior_sha256": "edc785e9c2859ddbfb0622aea7785e679bc8fa231fccac12b1ffe7569f99589e",
+      "category": "dagger_success",
+      "command_max": [
+        0.4000000059604645,
+        0.20000000298023224,
+        0.44999998807907104
+      ],
+      "command_min": [
+        0.20000000298023224,
+        -0.10000000149011612,
+        -0.15000000596046448
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/dagger/D_priv_turnv2_lateral_left_official_dagger_8426.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "0b951fb41e7fecf7841d150324772d831f9007b5af138c2a813a28a800ba48d6",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_lateral_left_official_dagger",
+      "tilt_max_rad": 0.9495263695716858
+    },
+    {
+      "base_z_final": 1.2439180612564087,
+      "base_z_min": 1.2324479818344116,
+      "behavior_policy": "student_onnx",
+      "behavior_sha256": "edc785e9c2859ddbfb0622aea7785e679bc8fa231fccac12b1ffe7569f99589e",
+      "category": "dagger_success",
+      "command_max": [
+        0.4000000059604645,
+        0.10000000149011612,
+        0.15000000596046448
+      ],
+      "command_min": [
+        0.20000000298023224,
+        -0.20000000298023224,
+        -0.44999998807907104
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/dagger/D_priv_turnv2_lateral_right_high_plateau_dagger_8430.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "406cd06c3739c998159aedd86a2b27a30796efd834cc08e01e246b5ae349c2b5",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_lateral_right_high_plateau_dagger",
+      "tilt_max_rad": 3.1406161785125732
+    },
+    {
+      "base_z_final": 0.7921510934829712,
+      "base_z_min": 0.6873684525489807,
+      "behavior_policy": "student_onnx",
+      "behavior_sha256": "edc785e9c2859ddbfb0622aea7785e679bc8fa231fccac12b1ffe7569f99589e",
+      "category": "dagger_success",
+      "command_max": [
+        0.4000000059604645,
+        0.10000000149011612,
+        0.15000000596046448
+      ],
+      "command_min": [
+        0.20000000298023224,
+        -0.20000000298023224,
+        -0.44999998807907104
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/dagger/D_priv_turnv2_lateral_right_low_plateau_dagger_8432.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "2aaeb5d60333fc5546b587ade0f90f916aed442febaafc708bf8c9fede5b94f6",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_lateral_right_low_plateau_dagger",
+      "tilt_max_rad": 0.20880544185638428
+    },
+    {
+      "base_z_final": 1.6631673574447632,
+      "base_z_min": 1.427398443222046,
+      "behavior_policy": "student_onnx",
+      "behavior_sha256": "edc785e9c2859ddbfb0622aea7785e679bc8fa231fccac12b1ffe7569f99589e",
+      "category": "dagger_success",
+      "command_max": [
+        0.44999998807907104,
+        0.0,
+        0.5
+      ],
+      "command_min": [
+        0.20000000298023224,
+        0.0,
+        -0.5
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/dagger/D_priv_turnv2_switchback_high_plateau_dagger_8418.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "4861701a080523b584f459b5dfcdedccf8246285e5be2c92cc7215b07bc66b94",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_switchback_high_plateau_dagger",
+      "tilt_max_rad": 0.4506550431251526
+    },
+    {
+      "base_z_final": 0.7979024052619934,
+      "base_z_min": 0.7199016213417053,
+      "behavior_policy": "student_onnx",
+      "behavior_sha256": "edc785e9c2859ddbfb0622aea7785e679bc8fa231fccac12b1ffe7569f99589e",
+      "category": "dagger_success",
+      "command_max": [
+        0.44999998807907104,
+        0.0,
+        0.5
+      ],
+      "command_min": [
+        0.20000000298023224,
+        0.0,
+        -0.5
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/dagger/D_priv_turnv2_switchback_low_plateau_dagger_8420.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "1476ab49fad58009c4db1ae809d5d94da4b14d6afaafa8c03ed2260f09eb69fd",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_switchback_low_plateau_dagger",
+      "tilt_max_rad": 0.22359585762023926
+    },
+    {
+      "base_z_final": 0.8150283098220825,
+      "base_z_min": 0.675571620464325,
+      "behavior_policy": "student_onnx",
+      "behavior_sha256": "edc785e9c2859ddbfb0622aea7785e679bc8fa231fccac12b1ffe7569f99589e",
+      "category": "dagger_success",
+      "command_max": [
+        0.5,
+        0.0,
+        0.6000000238418579
+      ],
+      "command_min": [
+        0.0,
+        0.0,
+        -0.20000000298023224
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/dagger/D_priv_turnv2_turn_then_go_low_plateau_dagger_8422.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "8c88d46c7a0b6250b5ba5b86eca245edaa18734df50ef18eaebdccd30a5bcdc6",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_turn_then_go_low_plateau_dagger",
+      "tilt_max_rad": 0.8737995028495789
+    },
+    {
+      "base_z_final": 0.3441987931728363,
+      "base_z_min": 0.21490123867988586,
+      "behavior_policy": "student_onnx",
+      "behavior_sha256": "edc785e9c2859ddbfb0622aea7785e679bc8fa231fccac12b1ffe7569f99589e",
+      "category": "dagger_success",
+      "command_max": [
+        0.5,
+        0.0,
+        0.6000000238418579
+      ],
+      "command_min": [
+        0.0,
+        0.0,
+        -0.20000000298023224
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/dagger/D_priv_turnv2_turn_then_go_official_dagger_8424.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "a95b8613fa471df28a87e45fd420cec3f98b2130c0d2b4055c21de3e736e1a69",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_turn_then_go_official_dagger",
+      "tilt_max_rad": 0.8707179427146912
+    },
+    {
+      "base_z_final": 1.4278050661087036,
+      "base_z_min": 1.4010812044143677,
+      "behavior_policy": "student_onnx",
+      "behavior_sha256": "edc785e9c2859ddbfb0622aea7785e679bc8fa231fccac12b1ffe7569f99589e",
+      "category": "dagger_success",
+      "command_max": [
+        0.0,
+        0.0,
+        0.6000000238418579
+      ],
+      "command_min": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/dagger/D_priv_turnv2_yaw_left_high_plateau_dagger_8404.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "f4cb5e6247640ab4fa1dddecd894d7932062b571a82684333a0b9593f75adc96",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_yaw_left_high_plateau_dagger",
+      "tilt_max_rad": 0.40315037965774536
+    },
+    {
+      "base_z_final": 0.08093496412038803,
+      "base_z_min": 0.08009684830904007,
+      "behavior_policy": "student_onnx",
+      "behavior_sha256": "edc785e9c2859ddbfb0622aea7785e679bc8fa231fccac12b1ffe7569f99589e",
+      "category": "dagger_failure_boundary",
+      "command_max": [
+        0.0,
+        0.0,
+        0.6000000238418579
+      ],
+      "command_min": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/dagger/D_priv_turnv2_yaw_left_official_dagger_8402.npz",
+      "samples": 915,
+      "schema_version": 2,
+      "sha256": "fec8cc7029912da9a76a79734ba0c3378c90b3cae62669602941c696c3dee8b8",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_yaw_left_official_dagger",
+      "tilt_max_rad": 3.110109567642212
+    },
+    {
+      "base_z_final": 1.2559177875518799,
+      "base_z_min": 1.232470154762268,
+      "behavior_policy": "student_onnx",
+      "behavior_sha256": "edc785e9c2859ddbfb0622aea7785e679bc8fa231fccac12b1ffe7569f99589e",
+      "category": "dagger_success",
+      "command_max": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "command_min": [
+        0.0,
+        0.0,
+        -0.6000000238418579
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/dagger/D_priv_turnv2_yaw_right_high_plateau_dagger_8406.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "a6ed5c2528f3c651d57dfd753ec8cbf0cfa9abc1f5cee7741748cd2fac776826",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_yaw_right_high_plateau_dagger",
+      "tilt_max_rad": 3.133510112762451
+    },
+    {
+      "base_z_final": 0.7555481195449829,
+      "base_z_min": 0.6889284253120422,
+      "behavior_policy": "student_onnx",
+      "behavior_sha256": "edc785e9c2859ddbfb0622aea7785e679bc8fa231fccac12b1ffe7569f99589e",
+      "category": "dagger_success",
+      "command_max": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "command_min": [
+        0.0,
+        0.0,
+        -0.6000000238418579
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/dagger/D_priv_turnv2_yaw_right_low_plateau_dagger_8408.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "bbc9768df4d428babe26a58bd4a2101fcc84b095260e7361524f36e0863537b4",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_yaw_right_low_plateau_dagger",
+      "tilt_max_rad": 0.2084791213274002
+    },
+    {
+      "base_z_final": 0.8284579515457153,
+      "base_z_min": 0.7723665237426758,
+      "behavior_policy": "privileged_teacher",
+      "behavior_sha256": null,
+      "category": "teacher_demo",
+      "command_max": [
+        0.5,
+        0.0,
+        0.6000000238418579
+      ],
+      "command_min": [
+        0.20000000298023224,
+        0.0,
+        0.0
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/teacher/D_priv_turnv2_arc_left_low_plateau_teacher_8409.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "c2d7b90219cbb4104e3aa0afe408401b59a6ebd73e83220bf5a9b585da04f56d",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_arc_left_low_plateau_teacher",
+      "tilt_max_rad": 0.36819690465927124
+    },
+    {
+      "base_z_final": 0.35916823148727417,
+      "base_z_min": 0.3208593726158142,
+      "behavior_policy": "privileged_teacher",
+      "behavior_sha256": null,
+      "category": "teacher_demo",
+      "command_max": [
+        0.5,
+        0.0,
+        0.6000000238418579
+      ],
+      "command_min": [
+        0.20000000298023224,
+        0.0,
+        0.0
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/teacher/D_priv_turnv2_arc_left_official_teacher_8411.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "1cde5a6268bb83aad51054cd90619a47a609a9eb4a87fb8a000d6d489046b677",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_arc_left_official_teacher",
+      "tilt_max_rad": 0.05057728290557861
+    },
+    {
+      "base_z_final": 1.5879920721054077,
+      "base_z_min": 1.4745882749557495,
+      "behavior_policy": "privileged_teacher",
+      "behavior_sha256": null,
+      "category": "teacher_demo",
+      "command_max": [
+        0.5,
+        0.0,
+        0.0
+      ],
+      "command_min": [
+        0.20000000298023224,
+        0.0,
+        -0.6000000238418579
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/teacher/D_priv_turnv2_arc_right_high_plateau_teacher_8415.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "af346fc38e22311cf5ad79f6f1c8ae45443a9a3f37babaee73a66a18211b3722",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_arc_right_high_plateau_teacher",
+      "tilt_max_rad": 0.31665077805519104
+    },
+    {
+      "base_z_final": 0.35864198207855225,
+      "base_z_min": 0.33736902475357056,
+      "behavior_policy": "privileged_teacher",
+      "behavior_sha256": null,
+      "category": "teacher_demo",
+      "command_max": [
+        0.5,
+        0.0,
+        0.0
+      ],
+      "command_min": [
+        0.20000000298023224,
+        0.0,
+        -0.6000000238418579
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/teacher/D_priv_turnv2_arc_right_official_teacher_8413.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "56e3379427befa394986d2f2f340ed0240f689c92453504e31b0a92eac1a46a0",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_arc_right_official_teacher",
+      "tilt_max_rad": 0.03622046858072281
+    },
+    {
+      "base_z_final": 1.3487467765808105,
+      "base_z_min": 1.3341549634933472,
+      "behavior_policy": "privileged_teacher",
+      "behavior_sha256": null,
+      "category": "teacher_demo",
+      "command_max": [
+        0.4000000059604645,
+        0.20000000298023224,
+        0.44999998807907104
+      ],
+      "command_min": [
+        0.20000000298023224,
+        -0.10000000149011612,
+        -0.15000000596046448
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/teacher/D_priv_turnv2_lateral_left_high_plateau_teacher_8427.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "5c60ff3d7c246a1ad63582e4a815996036154e1a3ca17e04e83507878a505d65",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_lateral_left_high_plateau_teacher",
+      "tilt_max_rad": 0.4972724914550781
+    },
+    {
+      "base_z_final": 0.3642488121986389,
+      "base_z_min": 0.31357452273368835,
+      "behavior_policy": "privileged_teacher",
+      "behavior_sha256": null,
+      "category": "teacher_demo",
+      "command_max": [
+        0.4000000059604645,
+        0.20000000298023224,
+        0.44999998807907104
+      ],
+      "command_min": [
+        0.20000000298023224,
+        -0.10000000149011612,
+        -0.15000000596046448
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/teacher/D_priv_turnv2_lateral_left_official_teacher_8425.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "d61c569a316dfd8dbb401ebda8f7d70489ffa64cb861701e2b2dd6a9023d04a6",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_lateral_left_official_teacher",
+      "tilt_max_rad": 0.05883067101240158
+    },
+    {
+      "base_z_final": 1.504919409751892,
+      "base_z_min": 1.4761170148849487,
+      "behavior_policy": "privileged_teacher",
+      "behavior_sha256": null,
+      "category": "teacher_demo",
+      "command_max": [
+        0.4000000059604645,
+        0.10000000149011612,
+        0.15000000596046448
+      ],
+      "command_min": [
+        0.20000000298023224,
+        -0.20000000298023224,
+        -0.44999998807907104
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/teacher/D_priv_turnv2_lateral_right_high_plateau_teacher_8429.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "3a1c5228a0af7ee7f86c82600c95ab857505c8f7d1dc2945fc9b6d5924c9127f",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_lateral_right_high_plateau_teacher",
+      "tilt_max_rad": 0.20897617936134338
+    },
+    {
+      "base_z_final": 0.8343669176101685,
+      "base_z_min": 0.7971864342689514,
+      "behavior_policy": "privileged_teacher",
+      "behavior_sha256": null,
+      "category": "teacher_demo",
+      "command_max": [
+        0.4000000059604645,
+        0.10000000149011612,
+        0.15000000596046448
+      ],
+      "command_min": [
+        0.20000000298023224,
+        -0.20000000298023224,
+        -0.44999998807907104
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/teacher/D_priv_turnv2_lateral_right_low_plateau_teacher_8431.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "630b447373f76ec59536cf650fa24d8ba9afae164392229cc4142bff44c4c270",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_lateral_right_low_plateau_teacher",
+      "tilt_max_rad": 0.06571514159440994
+    },
+    {
+      "base_z_final": 1.367234468460083,
+      "base_z_min": 1.3354952335357666,
+      "behavior_policy": "privileged_teacher",
+      "behavior_sha256": null,
+      "category": "teacher_demo",
+      "command_max": [
+        0.44999998807907104,
+        0.0,
+        0.5
+      ],
+      "command_min": [
+        0.20000000298023224,
+        0.0,
+        -0.5
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/teacher/D_priv_turnv2_switchback_high_plateau_teacher_8417.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "7b42cb5ebb936de58f274f6608ef12540e497482d0842f5d5b9fee24f4da43e4",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_switchback_high_plateau_teacher",
+      "tilt_max_rad": 0.5481889843940735
+    },
+    {
+      "base_z_final": 0.8280287981033325,
+      "base_z_min": 0.7806395888328552,
+      "behavior_policy": "privileged_teacher",
+      "behavior_sha256": null,
+      "category": "teacher_demo",
+      "command_max": [
+        0.44999998807907104,
+        0.0,
+        0.5
+      ],
+      "command_min": [
+        0.20000000298023224,
+        0.0,
+        -0.5
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/teacher/D_priv_turnv2_switchback_low_plateau_teacher_8419.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "4a708bf4eaf5a89fd48c34a415b689143a3e1a87b0766b0da975fa2bd5dc7e7c",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_switchback_low_plateau_teacher",
+      "tilt_max_rad": 0.07979951798915863
+    },
+    {
+      "base_z_final": 0.9451237320899963,
+      "base_z_min": 0.7674981355667114,
+      "behavior_policy": "privileged_teacher",
+      "behavior_sha256": null,
+      "category": "teacher_demo",
+      "command_max": [
+        0.5,
+        0.0,
+        0.6000000238418579
+      ],
+      "command_min": [
+        0.0,
+        0.0,
+        -0.20000000298023224
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/teacher/D_priv_turnv2_turn_then_go_low_plateau_teacher_8421.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "f680f23803348f7d8e382c9f29a7390a82b2010efe6c0e2f3f2dd7851d4174e6",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_turn_then_go_low_plateau_teacher",
+      "tilt_max_rad": 0.25817519426345825
+    },
+    {
+      "base_z_final": 0.3613744378089905,
+      "base_z_min": 0.3161720633506775,
+      "behavior_policy": "privileged_teacher",
+      "behavior_sha256": null,
+      "category": "teacher_demo",
+      "command_max": [
+        0.5,
+        0.0,
+        0.6000000238418579
+      ],
+      "command_min": [
+        0.0,
+        0.0,
+        -0.20000000298023224
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/teacher/D_priv_turnv2_turn_then_go_official_teacher_8423.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "1ea58143d5ce272b8042c76325f8f293b790d4ea3e475be55f69f06651ceb8c1",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_turn_then_go_official_teacher",
+      "tilt_max_rad": 0.07233333587646484
+    },
+    {
+      "base_z_final": 1.4638928174972534,
+      "base_z_min": 1.3984415531158447,
+      "behavior_policy": "privileged_teacher",
+      "behavior_sha256": null,
+      "category": "teacher_demo",
+      "command_max": [
+        0.0,
+        0.0,
+        0.6000000238418579
+      ],
+      "command_min": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/teacher/D_priv_turnv2_yaw_left_high_plateau_teacher_8403.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "da4c14098ed4ba30237bd731ea9e98b0a10c169194f036bb328e8697e93b387a",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_yaw_left_high_plateau_teacher",
+      "tilt_max_rad": 0.22671283781528473
+    },
+    {
+      "base_z_final": 0.37871262431144714,
+      "base_z_min": 0.3151248097419739,
+      "behavior_policy": "privileged_teacher",
+      "behavior_sha256": null,
+      "category": "teacher_demo",
+      "command_max": [
+        0.0,
+        0.0,
+        0.6000000238418579
+      ],
+      "command_min": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/teacher/D_priv_turnv2_yaw_left_official_teacher_8401.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "024b019d6317199e14066a6cdd5eba78fc90c965f6a8b6aa98d2b9538b150f42",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_yaw_left_official_teacher",
+      "tilt_max_rad": 0.07003459334373474
+    },
+    {
+      "base_z_final": 1.4058295488357544,
+      "base_z_min": 1.403141975402832,
+      "behavior_policy": "privileged_teacher",
+      "behavior_sha256": null,
+      "category": "teacher_demo",
+      "command_max": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "command_min": [
+        0.0,
+        0.0,
+        -0.6000000238418579
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/teacher/D_priv_turnv2_yaw_right_high_plateau_teacher_8405.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "5a3936a3a66cffc5fbc2a16cb0c7ca93bff608833c9ee707f0fc2be8b3e9eb7e",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_yaw_right_high_plateau_teacher",
+      "tilt_max_rad": 0.1551932543516159
+    },
+    {
+      "base_z_final": 0.8400914072990417,
+      "base_z_min": 0.7960241436958313,
+      "behavior_policy": "privileged_teacher",
+      "behavior_sha256": null,
+      "category": "teacher_demo",
+      "command_max": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "command_min": [
+        0.0,
+        0.0,
+        -0.6000000238418579
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/teacher/D_priv_turnv2_yaw_right_low_plateau_teacher_8407.npz",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "3f8c466f4ddac86da37fe895818e7659c2c489ae357b783d95516722db418fdc",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "terrain_id": "turnv2_yaw_right_low_plateau_teacher",
+      "tilt_max_rad": 0.04593752697110176
+    }
+  ],
+  "quality_contract": {
+    "duplicate_file_hashes_allowed": false,
+    "finite_required": true,
+    "incomplete_dagger_allowed": true,
+    "labels_usable": true,
+    "schema_version": 2,
+    "teacher_demo_samples": 1000
+  },
+  "samples": 31608,
+  "shards": 32,
+  "status": "FORMAL",
+  "student_behavior_sha256": [
+    "edc785e9c2859ddbfb0622aea7785e679bc8fa231fccac12b1ffe7569f99589e"
+  ],
+  "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be"
+}

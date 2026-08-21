@@ -1,0 +1,7 @@
+{
+  "labels_usable": true,
+  "output": "/home/hashvr/goai_embodied_future_material_te_device_test/results/datasets/model_44196_turning_v2/FORMAL/teacher/D_priv_turnv2_arc_right_high_plateau_teacher_8415.npz",
+  "rollout_policy": null,
+  "samples": 1000,
+  "teacher": "/home/hashvr/goai_embodied_future_material/artifacts/teacher_model_44196_1413_raw100.onnx"
+}
