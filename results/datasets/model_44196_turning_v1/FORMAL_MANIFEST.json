@@ -1,0 +1,208 @@
+{
+  "dataset": "model_44196_turning_v1",
+  "entries": [
+    {
+      "base_z_final": 0.08107958734035492,
+      "base_z_min": 0.08007294684648514,
+      "behavior_policy": "student_onnx",
+      "command_max": [
+        0.4000000059604645,
+        0.0,
+        0.6000000238418579
+      ],
+      "command_min": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/dagger/D_priv_turn_left_curriculum_dagger_8201.npz",
+      "role": "dagger_failure_boundary",
+      "samples": 779,
+      "schema_version": 2,
+      "sha256": "c52a7e0853d9443a05c9f17c093af032632a3a761a4197bd646634c8c58e70ac",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "tilt_max_rad": 3.1415927410125732
+    },
+    {
+      "base_z_final": 0.08077925443649292,
+      "base_z_min": 0.08077925443649292,
+      "behavior_policy": "student_onnx",
+      "command_max": [
+        0.4000000059604645,
+        0.0,
+        0.6000000238418579
+      ],
+      "command_min": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/dagger/D_priv_turn_left_transition_dagger_8203.npz",
+      "role": "dagger_failure_boundary",
+      "samples": 605,
+      "schema_version": 2,
+      "sha256": "83b69967a13d0f1f10b2dd072633f8c383b36b59fe06a0b656e52b463c7f35e4",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "tilt_max_rad": 3.1043879985809326
+    },
+    {
+      "base_z_final": 0.3563668429851532,
+      "base_z_min": 0.21969056129455566,
+      "behavior_policy": "student_onnx",
+      "command_max": [
+        0.5,
+        0.0,
+        0.0
+      ],
+      "command_min": [
+        0.0,
+        0.0,
+        -0.6000000238418579
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/dagger/D_priv_turn_right_curriculum_dagger_8202.npz",
+      "role": "dagger",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "0fe60fb9e3b3a890c24a8f7f9c28103d16642e9266b0b741bdf31189735ce32c",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "tilt_max_rad": 0.19950366020202637
+    },
+    {
+      "base_z_final": 0.3334924280643463,
+      "base_z_min": 0.22637633979320526,
+      "behavior_policy": "student_onnx",
+      "command_max": [
+        0.5,
+        0.0,
+        0.20000000298023224
+      ],
+      "command_min": [
+        0.0,
+        0.0,
+        -0.6000000238418579
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/dagger/D_priv_turn_right_transition_dagger_8204.npz",
+      "role": "dagger",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "806203c4c72a9fd96906022b300c1901884d80043e492b6ba761e4668604e488",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "tilt_max_rad": 0.22893831133842468
+    },
+    {
+      "base_z_final": 0.3587677776813507,
+      "base_z_min": 0.31332454085350037,
+      "behavior_policy": "privileged_teacher",
+      "command_max": [
+        0.5,
+        0.0,
+        0.6000000238418579
+      ],
+      "command_min": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/teacher/D_priv_turn_left_curriculum_8101.npz",
+      "role": "teacher_demo",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "c6e535eaf7fe1d9bbc070962c5786ca7a587c97ebcb48d191563dcf9cdc31736",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "tilt_max_rad": 0.06879018992185593
+    },
+    {
+      "base_z_final": 0.36258816719055176,
+      "base_z_min": 0.3145870566368103,
+      "behavior_policy": "privileged_teacher",
+      "command_max": [
+        0.5,
+        0.0,
+        0.6000000238418579
+      ],
+      "command_min": [
+        0.0,
+        0.0,
+        -0.20000000298023224
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/teacher/D_priv_turn_left_transition_8103.npz",
+      "role": "teacher_demo",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "4d193120cd29873f5b02e289fb7087c361a09391740bf3bc698d1950fdf88e94",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "tilt_max_rad": 0.06539668887853622
+    },
+    {
+      "base_z_final": 0.3579976558685303,
+      "base_z_min": 0.3407188951969147,
+      "behavior_policy": "privileged_teacher",
+      "command_max": [
+        0.5,
+        0.0,
+        0.0
+      ],
+      "command_min": [
+        0.0,
+        0.0,
+        -0.6000000238418579
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/teacher/D_priv_turn_right_curriculum_8102.npz",
+      "role": "teacher_demo",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "b9c59ab05e392f03ccd4fc3aacd2af6dc668bc46600f1c80436d63d585faf091",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "tilt_max_rad": 0.0302272979170084
+    },
+    {
+      "base_z_final": 0.36326777935028076,
+      "base_z_min": 0.3405739963054657,
+      "behavior_policy": "privileged_teacher",
+      "command_max": [
+        0.5,
+        0.0,
+        0.20000000298023224
+      ],
+      "command_min": [
+        0.0,
+        0.0,
+        -0.6000000238418579
+      ],
+      "finite": true,
+      "labels_usable": true,
+      "path": "FORMAL/teacher/D_priv_turn_right_transition_8104.npz",
+      "role": "teacher_demo",
+      "samples": 1000,
+      "schema_version": 2,
+      "sha256": "e9135f749c50aef8b19380a7b289998b804ac34f26dad690ff70a639edc78591",
+      "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be",
+      "tilt_max_rad": 0.0484369695186615
+    }
+  ],
+  "quality_contract": {
+    "complete_demo_samples": 1000,
+    "finite_required": true,
+    "incomplete_dagger_allowed": true,
+    "labels_usable": true,
+    "schema_version": 2
+  },
+  "samples": 7384,
+  "shards": 8,
+  "status": "FORMAL",
+  "teacher_sha256": "857f2d59c04b6ee979e3fc776e2ca00e593c4d009297ed3b84427b0a5752b9be"
+}

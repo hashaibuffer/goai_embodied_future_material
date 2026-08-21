@@ -1,0 +1,7 @@
+{
+  "labels_usable": true,
+  "output": "/home/hashvr/goai_embodied_future_material_te_device_test/results/datasets/model_44196_turning_v1/FORMAL/dagger/D_priv_turn_right_curriculum_dagger_8202.npz",
+  "rollout_policy": "/home/hashvr/goai_embodied_future_material_te_device_test/models/terrain_locomotion.onnx",
+  "samples": 1000,
+  "teacher": "/home/hashvr/goai_embodied_future_material/artifacts/teacher_model_44196_1413_raw100.onnx"
+}
