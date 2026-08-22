@@ -1,0 +1,1037 @@
+{
+  "schema_version": 1,
+  "dataset_id": "fullroute_v1_20260822",
+  "description": "Fresh schema-v2 D_priv collection; no legacy shards are mixed in.",
+  "master_seed": 20260822,
+  "samples_per_shard": 1000,
+  "output_root": "results/datasets/fullroute_v1_20260822",
+  "collector": "scripts/collect_mujoco_d_priv.py",
+  "xml": "models/mjcf/S10_track_lidar.xml",
+  "log_every": 250,
+  "fixed_contract": {
+    "policy_hz": 50,
+    "privileged_scan_every_policy_frames": 1,
+    "waypoint_reach_radius_m": 0.2,
+    "teacher_input": 1413,
+    "student_input": 441,
+    "action_output": 16
+  },
+  "quality_gates": {
+    "min_mean_privileged_hit_fraction": 0.5,
+    "min_base_z_m": 0.08,
+    "max_reverse_fraction_when_fast": 0.15,
+    "max_stalled_fraction_when_fast": 0.75
+  },
+  "profiles": {
+    "flat_fast_left": [
+      [
+        0,
+        0.6,
+        0,
+        0
+      ],
+      [
+        0.18,
+        0.75,
+        0,
+        0
+      ],
+      [
+        0.36,
+        0.9,
+        0,
+        0.18
+      ],
+      [
+        0.56,
+        1,
+        0,
+        0
+      ],
+      [
+        0.72,
+        0.75,
+        0,
+        -0.18
+      ],
+      [
+        0.9,
+        0.6,
+        0,
+        0
+      ]
+    ],
+    "flat_fast_right": [
+      [
+        0,
+        0.6,
+        0,
+        0
+      ],
+      [
+        0.18,
+        0.75,
+        0,
+        0
+      ],
+      [
+        0.36,
+        0.9,
+        0,
+        -0.18
+      ],
+      [
+        0.56,
+        1,
+        0,
+        0
+      ],
+      [
+        0.72,
+        0.75,
+        0,
+        0.18
+      ],
+      [
+        0.9,
+        0.6,
+        0,
+        0
+      ]
+    ],
+    "turning_left": [
+      [
+        0,
+        0.65,
+        0,
+        0
+      ],
+      [
+        0.2,
+        0.75,
+        0,
+        0.28
+      ],
+      [
+        0.45,
+        0.6,
+        0,
+        0.5
+      ],
+      [
+        0.65,
+        0.75,
+        0,
+        0
+      ],
+      [
+        0.82,
+        0.85,
+        0,
+        -0.2
+      ]
+    ],
+    "turning_right": [
+      [
+        0,
+        0.65,
+        0,
+        0
+      ],
+      [
+        0.2,
+        0.75,
+        0,
+        -0.28
+      ],
+      [
+        0.45,
+        0.6,
+        0,
+        -0.5
+      ],
+      [
+        0.65,
+        0.75,
+        0,
+        0
+      ],
+      [
+        0.82,
+        0.85,
+        0,
+        0.2
+      ]
+    ],
+    "recovery_left": [
+      [
+        0,
+        0.45,
+        0,
+        0
+      ],
+      [
+        0.15,
+        0.65,
+        0,
+        0.35
+      ],
+      [
+        0.35,
+        0.75,
+        0,
+        -0.25
+      ],
+      [
+        0.55,
+        0.6,
+        0,
+        0
+      ],
+      [
+        0.75,
+        0.45,
+        0,
+        0.5
+      ],
+      [
+        0.9,
+        0.65,
+        0,
+        0
+      ]
+    ],
+    "recovery_right": [
+      [
+        0,
+        0.45,
+        0,
+        0
+      ],
+      [
+        0.15,
+        0.65,
+        0,
+        -0.35
+      ],
+      [
+        0.35,
+        0.75,
+        0,
+        0.25
+      ],
+      [
+        0.55,
+        0.6,
+        0,
+        0
+      ],
+      [
+        0.75,
+        0.45,
+        0,
+        -0.5
+      ],
+      [
+        0.9,
+        0.65,
+        0,
+        0
+      ]
+    ]
+  },
+  "scenarios": [
+    {
+      "id": "probe_official_33",
+      "phase": "probe",
+      "category": "official",
+      "mode": "route",
+      "terrain_id": "official_probe_00_32",
+      "shards": 1,
+      "samples": 16000,
+      "waypoint_ranges": [
+        [
+          0,
+          32
+        ]
+      ],
+      "speeds": [
+        0.75
+      ]
+    },
+    {
+      "id": "train_flat_corridors",
+      "phase": "train",
+      "category": "flat",
+      "mode": "schedule",
+      "terrain_id": "official_flat",
+      "shards": 30,
+      "profiles": [
+        "flat_fast_left",
+        "flat_fast_right"
+      ],
+      "start_poses": [
+        [
+          0,
+          -2.5,
+          0.2,
+          0
+        ],
+        [
+          2.7225,
+          34.53,
+          0.475,
+          -0.1793
+        ],
+        [
+          -20.655,
+          47.7825,
+          1.165,
+          0.0113
+        ],
+        [
+          31.635,
+          15.465,
+          1.67,
+          -0.1835
+        ],
+        [
+          30.935,
+          14.715,
+          3.75,
+          2.285
+        ]
+      ]
+    },
+    {
+      "id": "train_ramps",
+      "phase": "train",
+      "category": "ramp",
+      "mode": "route",
+      "terrain_id": "official_ramps",
+      "shards": 20,
+      "waypoint_ranges": [
+        [
+          0,
+          1
+        ],
+        [
+          6,
+          8
+        ],
+        [
+          23,
+          24
+        ],
+        [
+          28,
+          29
+        ]
+      ],
+      "speeds": [
+        0.6,
+        0.75,
+        0.9,
+        1
+      ]
+    },
+    {
+      "id": "train_stairs_ordinary",
+      "phase": "train",
+      "category": "stairs",
+      "mode": "route",
+      "terrain_id": "stairs_ordinary",
+      "shards": 4,
+      "waypoint_ranges": [
+        [
+          9,
+          10
+        ],
+        [
+          15,
+          16
+        ]
+      ],
+      "speeds": [
+        0.6,
+        0.75,
+        0.85,
+        0.9
+      ]
+    },
+    {
+      "id": "train_stairs_wp17_18",
+      "phase": "train",
+      "category": "stairs",
+      "mode": "route",
+      "terrain_id": "stairs_wp17_18",
+      "shards": 6,
+      "waypoint_ranges": [
+        [
+          16,
+          18
+        ]
+      ],
+      "speeds": [
+        0.6,
+        0.75,
+        0.85
+      ]
+    },
+    {
+      "id": "train_stairs_wp22_23",
+      "phase": "train",
+      "category": "stairs",
+      "mode": "route",
+      "terrain_id": "stairs_wp22_23",
+      "shards": 5,
+      "waypoint_ranges": [
+        [
+          21,
+          23
+        ]
+      ],
+      "speeds": [
+        0.6,
+        0.75,
+        0.85,
+        0.75,
+        0.6
+      ]
+    },
+    {
+      "id": "train_stairs_wp25_26",
+      "phase": "train",
+      "category": "stairs",
+      "mode": "route",
+      "terrain_id": "stairs_wp25_26",
+      "shards": 6,
+      "waypoint_ranges": [
+        [
+          24,
+          26
+        ]
+      ],
+      "speeds": [
+        0.6,
+        0.75,
+        0.85
+      ]
+    },
+    {
+      "id": "train_stairs_wp27_28",
+      "phase": "train",
+      "category": "stairs",
+      "mode": "route",
+      "terrain_id": "stairs_wp27_28",
+      "shards": 9,
+      "waypoint_ranges": [
+        [
+          26,
+          28
+        ]
+      ],
+      "speeds": [
+        0.6,
+        0.75,
+        0.85,
+        0.9
+      ]
+    },
+    {
+      "id": "train_turning",
+      "phase": "train",
+      "category": "turning",
+      "mode": "schedule",
+      "terrain_id": "official_flat_turning",
+      "shards": 25,
+      "profiles": [
+        "turning_left",
+        "turning_right"
+      ],
+      "start_poses": [
+        [
+          2.7225,
+          34.53,
+          0.475,
+          -0.1793
+        ],
+        [
+          -20.655,
+          47.7825,
+          1.165,
+          0.0113
+        ],
+        [
+          31.635,
+          15.465,
+          1.67,
+          -0.1835
+        ],
+        [
+          30.935,
+          14.715,
+          3.75,
+          2.285
+        ]
+      ]
+    },
+    {
+      "id": "train_official_00_07",
+      "phase": "train",
+      "category": "official",
+      "mode": "route",
+      "terrain_id": "official_wp00_07",
+      "shards": 4,
+      "waypoint_ranges": [
+        [
+          0,
+          2
+        ],
+        [
+          2,
+          4
+        ],
+        [
+          4,
+          6
+        ],
+        [
+          6,
+          7
+        ]
+      ],
+      "speeds": [
+        0.6,
+        0.75,
+        0.9
+      ]
+    },
+    {
+      "id": "train_official_07_10",
+      "phase": "train",
+      "category": "official",
+      "mode": "route",
+      "terrain_id": "official_wp07_10",
+      "shards": 5,
+      "waypoint_ranges": [
+        [
+          7,
+          8
+        ],
+        [
+          8,
+          9
+        ],
+        [
+          9,
+          10
+        ]
+      ],
+      "speeds": [
+        0.6,
+        0.75,
+        0.85
+      ]
+    },
+    {
+      "id": "train_official_10_17",
+      "phase": "train",
+      "category": "official",
+      "mode": "route",
+      "terrain_id": "official_wp10_17",
+      "shards": 3,
+      "waypoint_ranges": [
+        [
+          10,
+          13
+        ],
+        [
+          13,
+          15
+        ],
+        [
+          15,
+          17
+        ]
+      ],
+      "speeds": [
+        0.6,
+        0.75,
+        0.9
+      ]
+    },
+    {
+      "id": "train_official_17_23",
+      "phase": "train",
+      "category": "official",
+      "mode": "route",
+      "terrain_id": "official_wp17_23",
+      "shards": 4,
+      "waypoint_ranges": [
+        [
+          17,
+          19
+        ],
+        [
+          19,
+          21
+        ],
+        [
+          21,
+          23
+        ]
+      ],
+      "speeds": [
+        0.6,
+        0.75,
+        0.85
+      ]
+    },
+    {
+      "id": "train_official_23_28",
+      "phase": "train",
+      "category": "official",
+      "mode": "route",
+      "terrain_id": "official_wp23_28",
+      "shards": 6,
+      "waypoint_ranges": [
+        [
+          23,
+          24
+        ],
+        [
+          24,
+          26
+        ],
+        [
+          26,
+          28
+        ]
+      ],
+      "speeds": [
+        0.6,
+        0.75,
+        0.85
+      ]
+    },
+    {
+      "id": "train_official_28_32",
+      "phase": "train",
+      "category": "official",
+      "mode": "route",
+      "terrain_id": "official_wp28_32",
+      "shards": 3,
+      "waypoint_ranges": [
+        [
+          28,
+          30
+        ],
+        [
+          30,
+          31
+        ],
+        [
+          31,
+          32
+        ]
+      ],
+      "speeds": [
+        0.6,
+        0.75,
+        0.85
+      ]
+    },
+    {
+      "id": "train_recovery",
+      "phase": "train",
+      "category": "recovery",
+      "mode": "schedule",
+      "terrain_id": "official_recovery",
+      "shards": 10,
+      "profiles": [
+        "recovery_left",
+        "recovery_right"
+      ],
+      "start_poses": [
+        [
+          2.7225,
+          34.53,
+          0.475,
+          -0.1793
+        ],
+        [
+          -20.655,
+          47.7825,
+          1.165,
+          0.0113
+        ],
+        [
+          31.635,
+          15.465,
+          1.67,
+          -0.1835
+        ],
+        [
+          30.935,
+          14.715,
+          3.75,
+          2.285
+        ]
+      ]
+    },
+    {
+      "id": "validation_flat",
+      "phase": "validation",
+      "category": "flat",
+      "mode": "schedule",
+      "terrain_id": "heldout_flat",
+      "shards": 2,
+      "profiles": [
+        "flat_fast_left",
+        "flat_fast_right"
+      ],
+      "start_poses": [
+        [
+          2.7225,
+          34.53,
+          0.475,
+          -0.1793
+        ],
+        [
+          -20.655,
+          47.7825,
+          1.165,
+          0.0113
+        ]
+      ]
+    },
+    {
+      "id": "validation_ramp",
+      "phase": "validation",
+      "category": "ramp",
+      "mode": "route",
+      "terrain_id": "heldout_ramp",
+      "shards": 2,
+      "waypoint_ranges": [
+        [
+          0,
+          1
+        ],
+        [
+          23,
+          24
+        ]
+      ],
+      "speeds": [
+        0.7,
+        0.85
+      ]
+    },
+    {
+      "id": "validation_stairs",
+      "phase": "validation",
+      "category": "stairs",
+      "mode": "route",
+      "terrain_id": "heldout_stairs",
+      "shards": 3,
+      "waypoint_ranges": [
+        [
+          16,
+          18
+        ],
+        [
+          21,
+          23
+        ],
+        [
+          26,
+          28
+        ]
+      ],
+      "speeds": [
+        0.7,
+        0.8
+      ]
+    },
+    {
+      "id": "validation_turning",
+      "phase": "validation",
+      "category": "turning",
+      "mode": "schedule",
+      "terrain_id": "heldout_turning",
+      "shards": 2,
+      "profiles": [
+        "turning_left",
+        "turning_right"
+      ],
+      "start_poses": [
+        [
+          31.635,
+          15.465,
+          1.67,
+          -0.1835
+        ],
+        [
+          30.935,
+          14.715,
+          3.75,
+          2.285
+        ]
+      ]
+    },
+    {
+      "id": "validation_official",
+      "phase": "validation",
+      "category": "official",
+      "mode": "route",
+      "terrain_id": "heldout_official",
+      "shards": 3,
+      "waypoint_ranges": [
+        [
+          4,
+          7
+        ],
+        [
+          17,
+          20
+        ],
+        [
+          28,
+          32
+        ]
+      ],
+      "speeds": [
+        0.7,
+        0.8,
+        0.85
+      ]
+    },
+    {
+      "id": "test_flat",
+      "phase": "test",
+      "category": "flat",
+      "mode": "schedule",
+      "terrain_id": "test_flat",
+      "shards": 1,
+      "profiles": [
+        "flat_fast_right"
+      ],
+      "start_poses": [
+        [
+          -20.655,
+          47.7825,
+          1.165,
+          0.0113
+        ]
+      ]
+    },
+    {
+      "id": "test_ramp",
+      "phase": "test",
+      "category": "ramp",
+      "mode": "route",
+      "terrain_id": "test_ramp",
+      "shards": 1,
+      "waypoint_ranges": [
+        [
+          6,
+          8
+        ]
+      ],
+      "speeds": [
+        0.8
+      ]
+    },
+    {
+      "id": "test_stairs",
+      "phase": "test",
+      "category": "stairs",
+      "mode": "route",
+      "terrain_id": "test_stairs",
+      "shards": 2,
+      "waypoint_ranges": [
+        [
+          21,
+          23
+        ],
+        [
+          26,
+          28
+        ]
+      ],
+      "speeds": [
+        0.7,
+        0.8
+      ]
+    },
+    {
+      "id": "test_turning",
+      "phase": "test",
+      "category": "turning",
+      "mode": "schedule",
+      "terrain_id": "test_turning",
+      "shards": 1,
+      "profiles": [
+        "turning_left"
+      ],
+      "start_poses": [
+        [
+          31.635,
+          15.465,
+          1.67,
+          -0.1835
+        ]
+      ]
+    },
+    {
+      "id": "test_official",
+      "phase": "test",
+      "category": "official",
+      "mode": "route",
+      "terrain_id": "test_official",
+      "shards": 3,
+      "waypoint_ranges": [
+        [
+          0,
+          4
+        ],
+        [
+          17,
+          23
+        ],
+        [
+          28,
+          32
+        ]
+      ],
+      "speeds": [
+        0.7,
+        0.8,
+        0.85
+      ]
+    },
+    {
+      "id": "dagger_r1_all",
+      "phase": "dagger_r1",
+      "category": "mixed",
+      "mode": "route",
+      "terrain_id": "dagger_r1_official",
+      "shards": 30,
+      "waypoint_ranges": [
+        [
+          0,
+          4
+        ],
+        [
+          4,
+          7
+        ],
+        [
+          7,
+          10
+        ],
+        [
+          10,
+          17
+        ],
+        [
+          17,
+          23
+        ],
+        [
+          23,
+          28
+        ],
+        [
+          28,
+          32
+        ]
+      ],
+      "speeds": [
+        0.6,
+        0.75,
+        0.85,
+        0.9
+      ]
+    },
+    {
+      "id": "dagger_r2_all",
+      "phase": "dagger_r2",
+      "category": "mixed",
+      "mode": "route",
+      "terrain_id": "dagger_r2_official",
+      "shards": 25,
+      "waypoint_ranges": [
+        [
+          0,
+          7
+        ],
+        [
+          7,
+          10
+        ],
+        [
+          10,
+          17
+        ],
+        [
+          17,
+          23
+        ],
+        [
+          23,
+          28
+        ],
+        [
+          28,
+          32
+        ]
+      ],
+      "speeds": [
+        0.65,
+        0.75,
+        0.85
+      ]
+    },
+    {
+      "id": "dagger_r3_failures",
+      "phase": "dagger_r3",
+      "category": "failure_replay",
+      "mode": "route",
+      "terrain_id": "dagger_r3_failures",
+      "shards": 18,
+      "waypoint_ranges": [
+        [
+          7,
+          10
+        ],
+        [
+          16,
+          18
+        ],
+        [
+          21,
+          23
+        ],
+        [
+          24,
+          26
+        ],
+        [
+          26,
+          28
+        ],
+        [
+          28,
+          32
+        ]
+      ],
+      "speeds": [
+        0.65,
+        0.75,
+        0.85
+      ]
+    }
+  ]
+}
