@@ -217,16 +217,23 @@ class PrivilegedHeightScanner:
     X = np.linspace(-.8, 3.2, 41, dtype=np.float64)
     Y = np.linspace(-1.6, 1.6, 33, dtype=np.float64)
 
-    def __init__(self, model, *, body_exclude=-1):
+    def __init__(self, model, *, body_exclude=-1, overhead_clearance=1.25):
         self.model = model
         gx, gy = np.meshgrid(self.X, self.Y, indexing="xy")
         self.local_xy = np.column_stack([gx.reshape(-1), gy.reshape(-1)])
         if self.local_xy.shape != (1353, 2):
             raise RuntimeError("privileged grid must contain 1353 rays")
         # Static terrain only: group0 on, robot group1 and overlay group2 off.
-        self.geomgroup = np.asarray([1, 0, 0, 1, 1, 1], dtype=np.uint8)
+        # Group4 is reserved for overhead structure that must remain visible to
+        # collision/LiDAR but must not masquerade as ground in vertical scans.
+        self.geomgroup = np.asarray([1, 0, 0, 1, 0, 1], dtype=np.uint8)
         self.body_exclude = int(body_exclude)
         self.direction = np.asarray([0.0, 0.0, -1.0], dtype=np.float64)
+        self.overhead_clearance = float(overhead_clearance)
+        if self.overhead_clearance <= 0.0:
+            raise ValueError("overhead_clearance must be positive")
+        self.overhead_excluded_geom_ids = ()
+        self._overhead_geom_ids = set()
 
     def scan(self, data, base_pos_w, base_rotation_w):
         pos = np.asarray(base_pos_w, np.float64).reshape(3)
@@ -238,12 +245,43 @@ class PrivilegedHeightScanner:
         distances = np.full(1353, -1.0, dtype=np.float64)
         geom_ids = np.full(1353, -1, dtype=np.int32)
         geom_out = np.empty(1, dtype=np.int32)
-        for index, start in enumerate(starts):
-            geom_out[0] = -1
-            distances[index] = mujoco.mj_ray(
-                self.model, data, start, self.direction, self.geomgroup,
-                True, self.body_exclude, geom_out)
-            geom_ids[index] = geom_out[0]
+        temporarily_hidden = {}
+        try:
+            # Cached IDs are hidden only for the duration of the teacher scan.
+            # This avoids rediscovering the same roof every policy frame.
+            for geom_id in self._overhead_geom_ids:
+                temporarily_hidden[geom_id] = int(self.model.geom_group[geom_id])
+                self.model.geom_group[geom_id] = 4
+            # Isaac scans the terrain prim only. The imported MuJoCo scene has
+            # roofs/door frames mixed into terrain group0, so peel off any
+            # top-down hit safely above the locally reachable terrain envelope.
+            # The group change exists only inside this method: rendering,
+            # collision and the student LiDAR are untouched.
+            for _ in range(32):
+                newly_hidden = set()
+                for index, start in enumerate(starts):
+                    geom_out[0] = -1
+                    distances[index] = mujoco.mj_ray(
+                        self.model, data, start, self.direction, self.geomgroup,
+                        True, self.body_exclude, geom_out)
+                    geom_ids[index] = geom_out[0]
+                    if distances[index] >= 0.0 and geom_out[0] >= 0:
+                        hit_z = start[2] - distances[index]
+                        geom_id = int(geom_out[0])
+                        if (hit_z > pos[2] + self.overhead_clearance and
+                                int(self.model.geom_group[geom_id]) == 0):
+                            newly_hidden.add(geom_id)
+                if not newly_hidden:
+                    break
+                for geom_id in newly_hidden:
+                    temporarily_hidden.setdefault(
+                        geom_id, int(self.model.geom_group[geom_id]))
+                    self.model.geom_group[geom_id] = 4
+            self._overhead_geom_ids.update(temporarily_hidden)
+            self.overhead_excluded_geom_ids = tuple(sorted(self._overhead_geom_ids))
+        finally:
+            for geom_id, original_group in temporarily_hidden.items():
+                self.model.geom_group[geom_id] = original_group
         hit = (geom_ids >= 0) & (distances >= 0.0)
         height = np.full(1353, -1.0, dtype=np.float32)
         # hit_z = base_z + 20 - distance; Isaac term = base_z - hit_z - 0.5.
