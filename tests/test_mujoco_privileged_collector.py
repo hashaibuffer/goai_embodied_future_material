@@ -42,6 +42,24 @@ def test_privileged_grid_matches_isaac_shape_order_and_flat_height():
     np.testing.assert_allclose(height, -.1, atol=2e-6)
 
 
+def test_privileged_scan_looks_through_overhead_without_mutating_scene():
+    xml = """
+    <mujoco><worldbody>
+      <geom name="ground" type="plane" size="10 10 .1" group="0"/>
+      <geom name="roof" type="box" pos="0 0 2" size="2 2 .1" group="0"/>
+    </worldbody></mujoco>
+    """
+    model = mujoco.MjModel.from_xml_string(xml)
+    data = mujoco.MjData(model); mujoco.mj_forward(model, data)
+    roof_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "roof")
+    scanner = PrivilegedHeightScanner(model)
+    height, hit, geom_ids = scanner.scan(data, [0, 0, .4], np.eye(3))
+    assert hit.all()
+    np.testing.assert_allclose(height, -.1, atol=2e-6)
+    assert roof_id in scanner.overhead_excluded_geom_ids
+    assert int(model.geom_group[roof_id]) == 0
+
+
 def test_pure_lidar_filters_robot_and_returns_world_points():
     model, data = plane_model()
     cfg = {
