@@ -11,8 +11,9 @@ from d_priv_dataset import DPrivRecorder, validate_d_priv
 from mujoco_lidar import MujocoLidarScanner
 from mujoco_teacher import (
     DEFAULT_ROBOT, JOINT_INIT_RAW, PrivilegedHeightScanner, S10PolicyState,
-    assemble_official_57, assemble_teacher_1413, decode_action_raw,
-    run_stand_up, stand_up_target_raw)
+    assemble_asymmetric_teacher_inputs, assemble_official_57,
+    assemble_teacher_1413, decode_action_raw,
+    run_stand_up, sanitize_privileged_height_grid, stand_up_target_raw)
 
 
 def plane_model():
@@ -40,6 +41,51 @@ def test_privileged_grid_matches_isaac_shape_order_and_flat_height():
     np.testing.assert_allclose(scanner.local_xy[41], [-.8, -1.5])
     assert hit.all() and np.all(geom_ids >= 0)
     np.testing.assert_allclose(height, -.1, atol=2e-6)
+
+
+def test_asymmetric_actor_height_map_converts_raw_yx_to_trained_xy_order():
+    state = S10PolicyState(
+        np.zeros(3), np.eye(3), np.zeros(3), np.zeros(3),
+        DEFAULT_ROBOT.copy(), np.zeros(16),
+    )
+    raw_yx = np.arange(33 * 41, dtype=np.float32).reshape(33, 41)
+    _, _, height_map = assemble_asymmetric_teacher_inputs(
+        state, np.zeros(57), raw_yx.reshape(-1)
+    )
+    assert height_map.shape == (1, 41, 33)
+    np.testing.assert_array_equal(height_map[0], raw_yx.T)
+    assert height_map.flags.c_contiguous
+
+
+def test_privileged_grid_encodes_no_hit_as_finite_positive_drop():
+    model = mujoco.MjModel.from_xml_string(
+        """<mujoco><worldbody><body name="base_link" pos="0 0 .4">
+        <freejoint/><geom type="sphere" size=".1" group="1"/>
+        </body></worldbody></mujoco>"""
+    )
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    scanner = PrivilegedHeightScanner(model)
+    height, hit, geom_ids = scanner.scan(data, [0, 0, .4], np.eye(3))
+    assert not hit.any() and np.all(geom_ids == -1)
+    np.testing.assert_allclose(height, scanner.DEEP_DROP_FILL)
+
+
+def test_command_first_cliff_protocol_extends_boundaries_and_compresses_deep_hits():
+    raw = np.zeros((33, 41), np.float32)
+    valid = np.zeros((33, 41), bool)
+    raw[0, 0], valid[0, 0] = .10, True
+    raw[0, 2], valid[0, 2] = .30, True
+    raw[1, 1], valid[1, 1] = .45, True
+    raw[1, 2], valid[1, 2] = .53, True
+    raw[1, 3], valid[1, 3] = .80, True
+    sanitized = sanitize_privileged_height_grid(raw, valid, -.10)
+    assert sanitized[0, 1] == pytest.approx(.10)  # equal distance: same row wins
+    assert sanitized[1, 0] == pytest.approx(.45)
+    assert sanitized[1, 1] == pytest.approx(.45)  # valid drop <= .45 unchanged
+    assert sanitized[1, 2] == pytest.approx(.17)  # only > .52 is compressed
+    assert sanitized[1, 3] == pytest.approx(.17)
+    assert sanitized[20, 20] == pytest.approx(-.10)  # no row/column support
 
 
 def test_pure_lidar_filters_robot_and_returns_world_points():

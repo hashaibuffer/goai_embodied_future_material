@@ -22,12 +22,14 @@ student_obs[441]  = official_proprio[57] + lidar_height[192] + validity[192]
 label[16]         = teacher ONNX 输出的原始动作 a_raw，禁止提前 decode
 ```
 
-教师高度扫描严格复现 Isaac Lab：
+教师高度扫描严格复现 Isaac Lab（2026-08-22 起点已从 20 m 降到 1.2 m，见下方更正说明）：
 
 - yaw-only 网格，`x=[-0.8,3.2]`、`y=[-1.6,1.6]`、分辨率 `0.1 m`；包含端点，`41x33=1353`。
 - 展平顺序是 y 外层、x 内层；索引 0 为 `(-0.8,-1.6)`，索引 1 为 `(-0.7,-1.6)`。
-- 每个网格点从 `base_z+20 m` 向世界 `-Z` 发射独立射线，只命中静态赛道，排除机器人和 overlay。
-- 输入值为 `clip(base_z-hit_z-0.5,-1,1)`；20 m 只用于射线起点，不进入数值。
+- 每个网格点从 `base_z+1.2 m` 向世界 `-Z` 发射独立射线，只命中静态赛道，排除机器人和 overlay。
+- 原始输入值为 `max(base_z-hit_z-0.5,-1)`；`1.2 m` 只用于射线起点，不进入数值。
+- CommandFirst 清洗保留 `<=+0.52m` 的有效下降，`>+0.52m` 映射为 `+0.17m`；no-hit
+  优先复制同扫描行/列最近有效值，否则使用 3x3 足下扫描中值（至少 5/9 命中）。
 - 教师推理不加训练随机噪声。学生 384 维必须来自比赛 `4344` 线 MuJoCo LiDAR 和 `heightmap.py`，绝不能复制教师真值。
 
 控制周期：MuJoCo `0.001 s`，教师 `0.02 s`，学生 LiDAR `20 Hz`。动作顺序和 scale 与官方 runner 相同，decode 只在仿真控制器执行一次。
@@ -55,12 +57,27 @@ ONNX 的 `actions` 是教师 actor 的**原始动作**（`a_raw`），对齐 Isa
 教师高度扫描的单元值严格为：
 
 ```text
-hit_z = base_z + 20.0 - ray_distance
-height[i] = clip(base_z - hit_z - 0.5, -1.0, 1.0)
-         = clip(ray_distance - 20.5, -1.0, 1.0)
+hit_z = base_z + 1.2 - ray_distance
+raw[i] = max(base_z - hit_z - 0.5, -1.0)
+       = max(ray_distance - 1.7, -1.0)
 ```
 
-射线起点的 `+20 m` 只是为了覆盖地形，不得把 20 m 作为观测偏置再次加入。只打开静态赛道 geom group，关闭机器人和 overlay group；无命中的单元保持 `-1.0`，并由 `privileged_hit_fraction` 记录质量。
+射线起点的 `+1.2 m` 只是为了贴近机身高度覆盖脚下地形，不得把 `1.2` 作为观测偏置再次加入。只打开静态赛道 geom group，关闭机器人和 overlay group。清洗后，有效下降 `<=+0.52m` 保持原值，更深命中映射成 `+0.17m`；no-hit 优先复制同扫描行/列最近有效值，找不到时使用 3x3 足下地面中值，足下有效比例低于 `5/9` 时使用 `+0.17m`。原始命中质量仍由 `privileged_hit_fraction` 单独记录。
+
+> 2026-08-22 更正（起点从 20 m 降到 1.2 m）：Isaac Lab 端 `rl_training` commit
+> `39cd082`（`fix(s10): lower Isaac height scanner origin`）把 `rough_env_cfg.py`/
+> `teacher_env_cfg.py` 的 `height_scanner(.offset.pos.z)` 从 `20.0` 改成 `1.2`。
+> 根因：赛道存在门框/屋顶等高处悬空结构，`base_z+20 m` 的射线起点在下落
+> 过程中可能先命中这些悬空结构而不是脚下真实地形，产生错误的"高障碍"
+> 读数，误判需要避障/攀爬。`mdp.height_scan` 的观测公式
+> `sensor_pos_w.z - ray_hit.z - offset` 与起点高度无关（起点抬升量已在
+> `sensor_pos_w.z` 里精确扣除），因此**观测数值语义完全不变**，只是射线
+> 路径变短、不再穿越机身上方远处的悬空结构。MuJoCo 侧
+> `PrivilegedHeightScanner`（`src/s10_terrain_perception/mujoco_teacher.py`）
+> 已同步把射线起点从 `pos[2]+20.0` 改为 `pos[2]+RAY_ORIGIN_OFFSET_Z`
+> （`=1.2`），公式常量从 `20.5` 改为 `RAY_ORIGIN_OFFSET_Z+HEIGHT_SCAN_OFFSET`
+> （`=1.7`）。所有引用旧 `+20 m`/`-20.5` 常量的历史 shard 数值不受影响
+> （公式恒等），仅新采数据在有悬空结构的路段会更准确。
 
 ### 1.2 一条样本的完整时序
 
@@ -309,6 +326,78 @@ python3 scripts/collect_mujoco_d_priv.py \
 ```
 
 输入命令会冻结裁剪到比赛范围：`vx[-1,1]`、`vy[-0.6,0.6]`、`wz[-1,1]`。同一 checkpoint 的不同地形、不同随机种子应写不同 NPZ，禁止覆盖旧 shard。
+
+## 6.5 实时键盘遥控回放（不落盘，用于人工验收）
+
+`scripts/play_mujoco_teacher.py` 复用与 `collect_mujoco_d_priv.py` 完全相同的协议管线
+（16 actuator MJCF、StandUp 起立、`official_proprio[57]`、`teacher_obs[1413]`、
+raw action decode），但用 `mujoco.viewer.launch_passive` 打开一个可视化窗口，
+并把 `vx/vy/wz` 命令换成实时键盘输入，而不是固定/预定义的 `--command`。
+用于人工判断某个 checkpoint 在官方赛道 MuJoCo 环境里的真实闭环表现（不经过
+Isaac/USD 复刻场景），比对着日志曲线更直观。
+
+```bash
+python3 scripts/play_mujoco_teacher.py \
+  --teacher-onnx artifacts/teacher_model_N_1413.onnx
+```
+
+**vx/vy/wz 是三个相互独立、可叠加的轴**：同时按住 `w`+`a` 会得到"前进的同时左转"的合成三维向量命令，而不是只响应最后一个按键，效果等价于真实手柄的组合输入。
+
+| 按键 | 作用 |
+| --- | --- |
+| 按住 `w` / `s` | `vx` = `+--vx-limit` / `-vx_limit`（松开自动回零） |
+| 按住 `a` / `d` | `wz` = `+--wz-limit` / `-wz_limit`（松开自动回零） |
+| 按住 `q` / `e` | `vy` = `+--vy-limit` / `-vy_limit`（松开自动回零，比赛少用） |
+| `h` | **原地恢复站立**：不传送回 `--start`，保留当前 x/y 位置与朝向 yaw，把基座摊平到水平、关节回到坐姿 `JOINT_INIT_RAW`，然后原地重跑一遍 StandUp PD。适合在赛道上摔倒/被卡住时原地爬起来继续跑，而不是回到起点重来 |
+| `r` | 立即重置：回到 `--start`，重新走一遍 StandUp，命令清零 |
+| `p` | 暂停/继续物理步进（可用来定格观察） |
+| `Ctrl+C` / 关闭窗口 | 退出 |
+
+> **实现方式**：与 `mujoco.viewer.launch_passive` 的 `key_callback` 完全无关，而是复用
+> `src/S10_sdk_deploy/interface/user_command/keyboard_interface_sim.hpp`（真机/ROS2 遥控用的同一套方案）的思路，
+> 提供两套后端，`KeyboardCommand.start()` 自动探测选用：
+>
+> 1. **`evdev`（首选，精确叠加）**：直接读 `/dev/input/eventN` 的原始
+>    `press(1)/repeat(2)/release(0)` 事件，和 `keyboard_interface_sim.hpp` 的
+>    `libevdev` 循环完全一致，用一个 `pressed` 集合实时记录"当前物理按下的键"。
+>    松开是真实事件而非超时推断，因此**同时按住任意组合键（比如 `w+a+q` 三个键一起按）**
+>    都能精确反映为三轴同时非零，不会互相干扰或漏判。
+>    使用前需要该 Linux 账号能读 `/dev/input/eventN`（一次性设置）：
+>    ```bash
+>    sudo apt install -y python3-evdev   # 或: pip install evdev
+>    sudo usermod -aG input $USER
+>    # 然后重新登录（或重启终端会话）让组权限生效
+>    ```
+>    脚本启动时若能用这个后端会打印 `keyboard backend: evdev (<设备名>)`。
+> 2. **`termios` stdin（自动兜底）**：没有 evdev 或没有 `/dev/input` 权限时（例如 SSH 远程、
+>    容器内、没执行上面的 `usermod`）自动降级到这个方案 —— 后台线程把终端设为 `cbreak`
+>    模式，直接从 `stdin` 非阻塞读字符，靠系统按键重复（约 30-50ms 一次）+ `--key-timeout`
+>    （默认 0.3s）没再收到判定"已松开"。**这个方案在同时按住 3 个及以上键时可能因为
+>    终端/键盘的按键防冲突（N-key rollover）限制而漏判**——部分键盘在多键同时按住时只稳定
+>    重复"最后按下"的那个键，之前按住的键会暂停重复直到松开，超过 `--key-timeout` 后
+>    会被误判为已松开。两键组合（如 `w+a`）通常没问题，稳妥叠加建议用 evdev 后端。
+>
+> 换成后台读键盘而不是用 viewer `key_callback` 的原因：
+> 1. `mujoco.viewer` 的 `key_callback` 只在 `GLFW_PRESS` 时触发（`python/mujoco/simulate.cc` 里
+>    `IsKeyDownEvent(act)` 判断），**从不传递松开事件**，所以用 viewer 的方案只能"按一下加一档"，
+>    松手后数值会卡在最后一次的值不回零。
+> 2. `mujoco.viewer` 的官方 `simulate` 面板把 **A-Z 全部 26 个字母**和顶排数字 `0-9` 都硬编码成了
+>    可视化/渲染开关快捷键（`mjVISSTRING`/`mjRNDSTRING`，例如 `W`=Wireframe、`S`=Shadow、`Q`=Camera），
+>    `key_callback` 无法屏蔽或覆盖它们（上游已知限制，见
+>    [google-deepmind/mujoco#2953](https://github.com/google-deepmind/mujoco/issues/2953)）。
+>
+> 两种后端都完全绕开 GLFW/viewer 的事件系统，因此天然不会和 viewer 内置快捷键冲突。
+> evdev 后端因为直接对接终端焦点无关，理论上不需要点击终端窗口；termios 后端仍需**焦点在终端窗口**才能收到按键。
+
+其他要点：
+
+- 机器人跌倒（`base_z < --stop-base-z`，默认 `0.08`）会自动触发与 `r` 相同的重置，不需要手动干预。
+- 默认按 wall-clock 节流到与真实策略周期一致的 `0.02 s/steps`（`--real-time`，默认开）；调试/录制吞吐更重要时用 `--no-real-time` 全速跑（画面会看起来加速）。
+- `--record OUTPUT.npz` 会同时按标准 D_priv schema 落盘（复用 `DPrivRecorder`），关窗口/`--max-steps` 到达后自动写出并跑 `validate_d_priv`；产物可直接用 `tools/inspect_d_priv.py` 检查，与 `collect_mujoco_d_priv.py` 的输出等价，但不建议作为主力批采手段（人操作命令不如脚本命令表可控/可复现）。
+- `--max-steps N` 仅用于自动化冒烟测试：跑满 N 个策略步后自动退出并保存，不必手动关窗口；交互式人工验收不需要这个参数。
+- `--fake-policy` 同样可用，仅做管线烟测（StandUp + viewer 是否能起来），零动作站不住属预期，见 1.5 节。
+- 若通过管道/重定向运行导致 stdin 不是真实 TTY，且 evdev 也不可用，脚本会打印警告并禁用键盘控制（不会崩溃），此时机器人始终收到零命令。
+- `evdev` Python 包需要单独安装（`pip install evdev`，见上）；未安装或没有 `/dev/input` 读权限时脚本会自动打印原因并降级到 `termios`，不会报错退出。
 
 ## 7. NPZ 字段和下游交付
 

@@ -6,6 +6,9 @@
 
 This repository provides the ROS 2 and MuJoCo simulation environment for a contest focused on racing the S10 robot around a waypoint track using perception. Participants train their own perception-based locomotion policy to control the S10 robot in the provided track scene.
 
+The frozen four-teacher Router can be tested directly on an explicitly selected
+MuJoCo scene; see [docs/S10_TEACHER_ROUTER_MUJOCO.md](docs/S10_TEACHER_ROUTER_MUJOCO.md).
+
 The default MuJoCo scene is `S10_track.xml`, which includes:
 
 - the unscaled S10 robot model from `S10.xml`. The corresponding URDF of S10 is `S10.urdf`.
