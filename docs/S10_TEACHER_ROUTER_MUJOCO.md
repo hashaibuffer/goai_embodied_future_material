@@ -7,9 +7,12 @@
 
 - NORMAL：T1 `model_17999`
 - HIGH_CLIMB：T4a `model_900`
-- LOW_STEP_SEQUENCE：T5 `model_800`
+- LOW_STEP_SEQUENCE：当前已验收基线为T5 `model_800`；新一轮checkpoint是在该基座上训练的
+  轮—棱有界残差，外部ONNX输入协议不变
 - RECOVERY：Recovery候选 `model_900`
-- Router分界：`<0.18 m`为Low，`>=0.18 m`为High
+- Router安全分界：`<0.16 m`为Low，`>=0.16 m`为High
+- Router继续读取操作者原始命令；只有Low Actor收到的前进速度会裁剪到训练上限`0.6 m/s`，
+  NORMAL与High不裁剪，Low退出后原命令立即恢复。
 - 每个Actor独立保持128维GRU状态；每拍只执行当前接管的Actor，其他休眠Actor持续保持零状态，切换进入专家时不会继承无关路段历史。
 - 当前棱的四轮支撑分别连续确认3拍；四轮都曾确认后才允许寻找下一级或进入Recovery。
 - Recovery收到新的非零人工命令会立即交还NORMAL，最长占用5秒。
@@ -83,7 +86,19 @@ router_bundle=/.../artifacts/s10_teacher_router/teacher_router_bundle.json
 
 ## 重新导出
 
-导出器显式导出GRU的`h_prev/h_next`，并对Torch/ONNX做数值一致性检查：
+导出器显式导出GRU的`h_prev/h_next`，并对Torch/ONNX做数值一致性检查。它会根据checkpoint中
+是否存在`low_residual.*`键自动选择Base或Low残差结构。当前只接受带
+`low_residual.contract_version=4`、末层`[12,64]`的动作协同残差；旧v1/v2/v3均明确拒绝，不可重解释。
+已验收Base model_800继续兼容，未验收新残差不会自动替换bundle。
+
+v4每轮输出`[前后, 上下, 轮速]`，共12路，用`raw/(1+abs(raw))`产生双向有界请求。近棱共同门
+允许前后轴同时动作和支撑协同，不再由前轴确认、后轴优先或净空归零互锁。名义棱距和轮位仍来自
+同一高度图/本体输入。在`default_q + parent_action * scale`的**父策略目标角**上计算Jacobian：
+前后/竖直请求各最多±4 cm，平滑缩小到每关节修正小于0.50 rad；仅朝直膝方向限制不超过原膝角
+绝对值45%，不把正常屈膝抬轮也锁住。HipX修正为0，轮速修正最多±2 rad/s，按5 rad/s/action映射。
+这些是目标修正上界，不是物理位移或通行率保证；std继承且冻结。RL父网络、动作16和Actor输入1413
+不变。sidecar architecture为`frozen-base-coordination-low-residual-v4`。全部计算仍只使用同一份
+`command/proprio/height_map`，不需要MuJoCo额外提供射线或状态机输入：
 
 ```bash
 /home/hashai/桌面/miniconda3/envs/isaaclab511/bin/python \
@@ -93,7 +108,9 @@ router_bundle=/.../artifacts/s10_teacher_router/teacher_router_bundle.json
 ```
 
 四个ONNX准备好后，用`tools/create_s10_teacher_router_bundle.py`生成带SHA256校验的bundle。
-bundle只声明模型和Detector/Router合同，不声明地图。
+bundle只声明模型和Detector/Router合同，不声明地图。生成器默认写入
+`low_forward_command_max_mps=0.6`；需要显式重建时可传
+`--low-forward-command-max-mps 0.6`，旧bundle未带该字段时运行时也按0.6兼容读取。
 
 ## 当前边界
 

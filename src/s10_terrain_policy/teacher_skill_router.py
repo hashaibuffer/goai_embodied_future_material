@@ -20,6 +20,26 @@ class PolicyMode(IntEnum):
 ROLE_NAMES = tuple(mode.name for mode in PolicyMode)
 
 
+def clamp_height_corridor(height_map, half_width_m):
+    """Clamp lateral sampling coordinates; retain all 41 forward rows.
+
+    The frozen grid spans y=-1.6..1.6 at 0.1 m. Boundaries between
+    columns use linear interpolation, so e.g. 0.25 means exactly 0.25 m.
+    Zero disables the transform. Never mutate the raw scanner input.
+    """
+    if not np.isfinite(half_width_m) or not 0.0 <= half_width_m <= 1.6:
+        raise ValueError("corridor half width must be finite and within [0, 1.6] m")
+    if half_width_m == 0.0:
+        return height_map
+    height = np.asarray(height_map)
+    if height.shape[-2:] != (41, 33):
+        raise ValueError(f"expected height map ending in (41, 33), got {height.shape}")
+    y = np.linspace(-1.6, 1.6, 33)
+    query = np.clip(y, -half_width_m, half_width_m)
+    return np.asarray([np.interp(query, y, row) for row in height.reshape(-1, 33)],
+                      dtype=height.dtype).reshape(height.shape)
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -28,15 +48,35 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def clamp_height_window(height_map, half_width_m=0., x_range=None):
+    height = clamp_height_corridor(height_map, half_width_m)
+    if x_range is None:
+        return height
+    if (len(x_range) != 2 or not np.isfinite(x_range).all()
+            or not -.8 <= x_range[0] < x_range[1] <= 3.2):
+        raise ValueError("height X range must satisfy -0.8 <= min < max <= 3.2")
+    x = np.linspace(-.8, 3.2, 41)
+    query = np.clip(x, *x_range)
+    transposed = np.asarray(height).swapaxes(-1, -2)
+    result = np.asarray([np.interp(query, x, row) for row in transposed.reshape(-1, 41)],
+                        dtype=transposed.dtype).reshape(transposed.shape)
+    return result.swapaxes(-1, -2).copy()
+
+
 class RecurrentOnnxActor:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, intra_op_threads=None) -> None:
         try:
             import onnxruntime as ort
         except ImportError as exc:
             raise RuntimeError("onnxruntime is required for Router playback") from exc
         self.path = path
+        options = ort.SessionOptions()
+        if intra_op_threads is not None:
+            if intra_op_threads < 1:
+                raise ValueError("Actor thread count must be positive")
+            options.intra_op_num_threads = intra_op_threads
         self.session = ort.InferenceSession(
-            str(path), providers=["CPUExecutionProvider"]
+            str(path), sess_options=options, providers=["CPUExecutionProvider"]
         )
         input_shapes = {item.name: item.shape for item in self.session.get_inputs()}
         output_shapes = {item.name: item.shape for item in self.session.get_outputs()}
@@ -103,6 +143,10 @@ class S10TeacherSkillRouter:
         self.wheel_confirmed = np.zeros(4, dtype=bool)
         self.pending_successor = None
         self.just_entered_recovery = False
+        self.paused_climb_mode = None
+        self.straddle_steps = 0
+        self.normal_straddle_steps = 0
+        self.last_entry_reason = None
 
     def _command_in_skill(self, command) -> bool:
         return bool(
@@ -116,12 +160,18 @@ class S10TeacherSkillRouter:
         return bool(np.all(np.abs(command) <= 1.0e-6))
 
     def _lock(self, detection, base_rotation_w) -> None:
-        self.locked_edge_center_w = detection.edge_segment_w.mean(axis=0)
+        self._lock_target(detection.edge_segment_w.mean(axis=0),
+                          float(detection.upper_z_w), base_rotation_w)
+        self.last_entry_reason = "forward_detector"
+
+    def _lock_target(self, center_w, upper_z_w, base_rotation_w) -> None:
+        self.paused_climb_mode = None
+        self.locked_edge_center_w = np.asarray(center_w, float).copy()
         rotation = np.asarray(base_rotation_w, np.float64).reshape(3, 3)
         direction = rotation[:2, 0].copy()
         direction /= max(1.0e-9, float(np.linalg.norm(direction)))
         self.locked_direction_w = direction
-        self.locked_upper_z_w = float(detection.upper_z_w)
+        self.locked_upper_z_w = float(upper_z_w)
         self.mode_steps = 0
         self.successor_wait_steps = 0
         self.wheel_support_steps.fill(0)
@@ -147,14 +197,58 @@ class S10TeacherSkillRouter:
         )
 
     def select(
-        self, command, detection, state, wheel_pos_z, wheel_contact
+        self, command, detection, state, wheel_pos_z, wheel_contact, wheel_support_z=None
     ) -> PolicyMode:
         command = np.asarray(command, np.float64).reshape(3)
         self.just_entered_recovery = False
         command_in_skill = self._command_in_skill(command)
         strict_zero = self._strict_zero(command)
+        # Only resume a previously interrupted climb, never infer a new HIGH
+        # target from chassis pitch. Actual tread rays reject wheel-lift poses.
+        split_support = False
+        if wheel_support_z is not None:
+            tread = np.asarray(wheel_support_z, float).reshape(4)
+            split_support = bool(np.isfinite(tread).all()
+                                 and np.min(tread[:2]) - np.min(tread[2:]) >= .04)
+        self.straddle_steps = self.straddle_steps + 1 if split_support else 0
+        if self.paused_climb_mode is not None:
+            if not strict_zero and not command_in_skill:
+                self.paused_climb_mode = None
+            elif command_in_skill and self.straddle_steps >= 3:
+                self.mode = self.paused_climb_mode
+                self.last_entry_reason = "paused_treads"
+                self.paused_climb_mode = None
+                self.mode_steps = 0
+                self.successor_wait_steps = 0
+                self.wheel_support_steps.fill(0)
+                self.wheel_confirmed.fill(False)
+                return self.mode
+            elif (command_in_skill and wheel_support_z is not None
+                  and np.isfinite(tread).all() and not split_support):
+                self.paused_climb_mode = None
 
         if self.mode == PolicyMode.NORMAL:
+            # A tread already beneath the chassis is outside the forward fan.
+            # Bootstrap LOW from current physical support, without pause history.
+            # Bound the gap to LOW and require grounded front wheels; lifted
+            # wheels over a lower floor must not create an entry condition.
+            low_straddle = bool(
+                command_in_skill and split_support
+                and np.max(tread[:2]) - np.min(tread[2:]) < self.height_split
+                and np.asarray(wheel_contact, bool).reshape(4)[:2].all()
+                and np.all(np.abs(np.asarray(wheel_pos_z)[:2] - tread[:2] - .11) <= .05)
+            )
+            self.normal_straddle_steps = self.normal_straddle_steps + 1 if low_straddle else 0
+            if self.normal_straddle_steps >= max(3, self.confirm_steps):
+                self.mode = PolicyMode.LOW_STEP_SEQUENCE
+                # This is an under-body progress anchor, not a detected edge.
+                # It supplies successor-distance bookkeeping and the actual
+                # front tread height for rear-wheel completion checks.
+                self._lock_target(state.base_pos_w, np.max(tread[:2]), state.base_rotation_w)
+                self.last_entry_reason = "normal_treads"
+                self.arm_steps = 0
+                self.normal_straddle_steps = 0
+                return self.mode
             if detection.has_target and command_in_skill:
                 self.arm_steps += 1
                 if self.arm_steps >= self.confirm_steps:
@@ -169,9 +263,12 @@ class S10TeacherSkillRouter:
                 self.arm_steps = 0
             return self.mode
 
+        self.normal_straddle_steps = 0
         if self.mode in (PolicyMode.HIGH_CLIMB, PolicyMode.LOW_STEP_SEQUENCE):
             self.mode_steps += 1
             if strict_zero or not command_in_skill or self.mode_steps >= self.attempt_steps:
+                if strict_zero:
+                    self.paused_climb_mode = self.mode
                 self._enter_recovery()
                 return self.mode
 
@@ -192,11 +289,13 @@ class S10TeacherSkillRouter:
             support_now = wheel_contact & (
                 wheel_pos_z >= self.locked_upper_z_w + 0.06
             )
+            if wheel_support_z is not None:
+                support_now &= np.isfinite(tread) & (tread >= self.locked_upper_z_w - .025)
             self.wheel_support_steps = np.where(
                 support_now, self.wheel_support_steps + 1, 0
             )
             self.wheel_confirmed |= self.wheel_support_steps >= 3
-            if self.wheel_confirmed.all():
+            if self.wheel_confirmed.all() and not split_support:
                 if (
                     self.pending_successor is not None
                     and self.mode == PolicyMode.LOW_STEP_SEQUENCE
@@ -227,13 +326,18 @@ class S10TeacherSkillRouter:
         if self.mode == PolicyMode.NORMAL:
             self.mode_steps = 0
             self.arm_steps = 0
-            self.locked_edge_center_w = None
-            self.locked_direction_w = None
+            if self.paused_climb_mode is None:
+                self.locked_edge_center_w = None
+                self.locked_direction_w = None
         return self.mode
 
 
 class TeacherSkillRuntime:
-    def __init__(self, bundle_path: Path, dt: float) -> None:
+    def __init__(self, bundle_path: Path, dt: float, *, low_height_corridor_half_width_m=0.0,
+                 low_height_x_range=None, actor_threads=None) -> None:
+        clamp_height_window(np.zeros((1, 41, 33), np.float32), low_height_corridor_half_width_m, low_height_x_range)
+        self.low_height_corridor_half_width_m = float(low_height_corridor_half_width_m)
+        self.low_height_x_range = low_height_x_range
         bundle_path = bundle_path.expanduser().resolve()
         payload = json.loads(bundle_path.read_text(encoding="utf-8"))
         if payload.get("kind") != "s10-goai-teacher-router-bundle":
@@ -243,13 +347,18 @@ class TeacherSkillRuntime:
         self.bundle_path = bundle_path
         self.detector_contract = payload["detector"]
         self.router = S10TeacherSkillRouter(payload["router"], dt)
+        self.low_forward_command_max_mps = float(
+            payload["router"].get("low_forward_command_max_mps", 0.6)
+        )
+        if self.low_forward_command_max_mps <= 0.0:
+            raise ValueError("Low forward command cap must be positive")
         self.actors = {}
         for role in ROLE_NAMES:
             entry = payload["skills"][role]
             path = (bundle_path.parent / entry["path"]).resolve()
             if _sha256(path) != entry["sha256"]:
                 raise ValueError(f"{role} ONNX hash mismatch: {path}")
-            self.actors[role] = RecurrentOnnxActor(path)
+            self.actors[role] = RecurrentOnnxActor(path, intra_op_threads=actor_threads)
 
     def reset(self) -> None:
         self.router.reset()
@@ -265,19 +374,34 @@ class TeacherSkillRuntime:
         state,
         wheel_pos_z,
         wheel_contact,
+        *, low_height_map=None, wheel_support_z=None,
     ) -> np.ndarray:
-        mode = self.router.select(
-            command, detection, state, wheel_pos_z, wheel_contact
-        )
+        router_args = (command, detection, state, wheel_pos_z, wheel_contact)
+        mode = (self.router.select(*router_args) if wheel_support_z is None
+                else self.router.select(*router_args, wheel_support_z))
         # A recurrent skill owns history only while it owns the robot.  Do not
         # let dormant experts integrate commands/terrain from another skill:
         # keep them at zero state and execute only the selected Actor.
         for role, actor in self.actors.items():
             if role != mode.name:
                 actor.reset()
-        active_command = (
-            np.zeros(3, np.float32)
-            if mode == PolicyMode.RECOVERY
-            else command
-        )
-        return self.actors[mode.name](active_command, proprio, height_map)
+        if mode == PolicyMode.RECOVERY:
+            active_command = np.zeros(3, np.float32)
+        else:
+            active_command = np.asarray(command, np.float32).copy()
+            if mode == PolicyMode.LOW_STEP_SEQUENCE:
+                active_command[0] = min(
+                    float(active_command[0]), self.low_forward_command_max_mps
+                )
+        actor_height = height_map
+        # Legacy low_* names are retained for command/API compatibility.
+        # All three locomotion actors consume the same selected surface and
+        # XY boundary extension; only RECOVERY retains the native map.
+        if mode in (PolicyMode.NORMAL, PolicyMode.LOW_STEP_SEQUENCE, PolicyMode.HIGH_CLIMB):
+            actor_height = clamp_height_window(
+                low_height_map if low_height_map is not None else height_map,
+                self.low_height_corridor_half_width_m,
+                getattr(self, "low_height_x_range", None),
+            )
+        self.last_actor_height_map = actor_height
+        return self.actors[mode.name](active_command, proprio, actor_height)

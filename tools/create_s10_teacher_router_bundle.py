@@ -29,10 +29,13 @@ def main() -> None:
     parser.add_argument("--low-step-sequence", type=Path, required=True)
     parser.add_argument("--recovery", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--height-split-m", type=float, default=0.18)
+    parser.add_argument("--height-split-m", type=float, default=0.16)
+    parser.add_argument("--low-forward-command-max-mps", type=float, default=0.6)
     args = parser.parse_args()
     if args.height_split_m <= 0.0:
         parser.error("--height-split-m must be positive")
+    if args.low_forward_command_max_mps <= 0.0:
+        parser.error("--low-forward-command-max-mps must be positive")
 
     output = args.output.expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -69,6 +72,7 @@ def main() -> None:
         # The scene is deliberately absent. --xml is mandatory at runtime.
         "router": {
             "height_split_m": args.height_split_m,
+            "low_forward_command_max_mps": args.low_forward_command_max_mps,
             "forward_min_x": 0.1,
             "max_abs_y": 0.1,
             "max_abs_yaw": 0.1,

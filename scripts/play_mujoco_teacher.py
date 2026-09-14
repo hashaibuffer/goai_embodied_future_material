@@ -103,7 +103,9 @@ from mujoco_teacher import (
     DEFAULT_ROBOT, JOINT_INIT_RAW, PrivilegedHeightScanner, assemble_official_57,
     assemble_asymmetric_teacher_inputs, assemble_teacher_1413,
     decode_action_raw, published_targets_to_raw, run_stand_up, state_from_mujoco)
-from teacher_skill_router import TeacherSkillRuntime
+from teacher_skill_router import TeacherSkillRuntime, clamp_height_window
+from locomotion_height import (SurfaceSelection, select_support_surface, wheel_tread_heights,
+                               scan_xy_world, height_debug_record)
 
 DEFAULT_LIDAR = ROOT / "configs" / "lidar.yaml"
 DEFAULT_HEIGHTMAP = ROOT / "configs" / "heightmap.yaml"
@@ -115,13 +117,15 @@ SUBSTEPS_PER_POLICY_STEP = 20
 
 
 class TeacherPolicy:
-    def __init__(self, path):
+    def __init__(self, path, actor_threads=1):
         try:
             import onnxruntime as ort
         except ImportError as exc:
             raise RuntimeError(
                 "onnxruntime is required for real playback: pip install onnxruntime") from exc
-        self.session = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+        options = ort.SessionOptions()
+        options.intra_op_num_threads = actor_threads
+        self.session = ort.InferenceSession(str(path), sess_options=options, providers=["CPUExecutionProvider"])
         inputs, outputs = self.session.get_inputs(), self.session.get_outputs()
         if len(inputs) != 1 or inputs[0].name != "obs" or inputs[0].shape[-1] != 1413:
             raise ValueError(
@@ -480,6 +484,10 @@ def draw_detector_debug(viewer, detection):
         )
 
 
+def draw_actor_height_debug(viewer, scanner, state, height):
+    """Deprecated compatibility hook: height markers are no longer rendered."""
+
+
 def wheel_contact_mask(model, data, wheel_body_ids):
     """Return per-wheel physical contact without depending on geom names."""
     wheel_by_body = {int(body_id): index for index, body_id in enumerate(wheel_body_ids)}
@@ -493,6 +501,10 @@ def wheel_contact_mask(model, data, wheel_body_ids):
     return result
 
 
+def draw_height_layers(viewer, raw, selection, actor_height, position, layer):
+    """Deprecated compatibility hook; three-layer data remains in JSONL only."""
+
+
 def build_arg_parser():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--teacher-onnx", type=Path)
@@ -501,6 +513,22 @@ def build_arg_parser():
         help="hash-pinned NORMAL/HIGH/LOW/RECOVERY recurrent teacher bundle",
     )
     parser.add_argument("--fake-policy", action="store_true", help="Protocol smoke only; ignores keyboard-driven realism")
+    parser.add_argument("--low-height-corridor-half-width", type=float, default=0.0,
+                        help="NORMAL/LOW/HIGH: lateral corridor half width in metres (0=off, max 1.6); extend each boundary height outward")
+    parser.add_argument("--low-height-x-range", nargs=2, type=float, metavar=("MIN", "MAX"),
+                        help="NORMAL/LOW/HIGH X coordinate clamp in metres; default preserves [-0.8, 3.2]")
+    parser.add_argument("--low-support-surface", action="store_true",
+                        help="select the connected support layer for NORMAL/LOW/HIGH and Detector; keep physical headroom checks")
+    parser.add_argument("--height-debug-layer", choices=("raw", "selected", "actor", "all"),
+                        help="deprecated, ignored: height markers removed; use --height-debug-log for data")
+    parser.add_argument("--height-debug-log", type=Path,
+                        help="append three-layer JSONL at --height-debug-every cadence; off unless explicitly requested")
+    parser.add_argument("--height-debug-every", type=int, default=100,
+                        help="height JSONL sampling interval in policy steps (default 100 = 2 simulation seconds)")
+    parser.add_argument("--actor-height-debug-vis", action="store_true",
+                        help="deprecated, ignored: height markers removed")
+    parser.add_argument("--viewer-hz", type=float, default=30., help="maximum viewer sync/overlay update rate; policy remains 50 Hz")
+    parser.add_argument("--actor-threads", type=int, default=1, help="ONNX intra-op threads per Actor (default 1 avoids CPU oversubscription)")
     parser.add_argument(
         "--detector-debug-vis", action="store_true",
         help="draw detector corridor, candidate edge, landing patch and clearance rays",
@@ -539,12 +567,28 @@ def build_arg_parser():
 def main():
     parser = build_arg_parser()
     args = parser.parse_args()
+    if not np.isfinite(args.low_height_corridor_half_width) or not 0 <= args.low_height_corridor_half_width <= 1.6:
+        parser.error("--low-height-corridor-half-width must be within [0, 1.6]")
+    if args.low_height_corridor_half_width and args.router_bundle is None:
+        parser.error("--low-height-corridor-half-width requires --router-bundle")
+    if (args.low_support_surface or args.low_height_x_range) and args.router_bundle is None:
+        parser.error("Low height processing requires --router-bundle")
+    try:
+        clamp_height_window(np.zeros((1, 41, 33), np.float32),
+                            args.low_height_corridor_half_width, args.low_height_x_range)
+    except ValueError as error:
+        parser.error(str(error))
     policy_choices = sum(
         (bool(args.fake_policy), args.teacher_onnx is not None, args.router_bundle is not None)
     )
     if policy_choices != 1:
         parser.error("choose exactly one of --teacher-onnx, --router-bundle or --fake-policy")
 
+    if (not np.isfinite(args.viewer_hz) or args.viewer_hz <= 0
+            or args.actor_threads < 1 or args.height_debug_every < 1):
+        parser.error("--viewer-hz must be finite and positive; --actor-threads/--height-debug-every must be positive")
+    if args.actor_height_debug_vis or args.height_debug_layer:
+        print("Height point visualization removed; legacy display flags are ignored. JSONL logging remains available.")
     model = mujoco.MjModel.from_xml_path(str(args.xml.resolve()))
     model.opt.timestep = .001
     data = mujoco.MjData(model)
@@ -565,7 +609,10 @@ def main():
 
     privileged = PrivilegedHeightScanner(model, body_exclude=base_id)
     router_runtime = (
-        TeacherSkillRuntime(args.router_bundle, POLICY_DT_S)
+        TeacherSkillRuntime(args.router_bundle, POLICY_DT_S,
+                            low_height_corridor_half_width_m=args.low_height_corridor_half_width,
+                            low_height_x_range=args.low_height_x_range,
+                            actor_threads=args.actor_threads)
         if args.router_bundle is not None else None
     )
     detector = (
@@ -575,7 +622,7 @@ def main():
     policy = (
         ZeroPolicy()
         if args.fake_policy
-        else TeacherPolicy(args.teacher_onnx) if args.teacher_onnx is not None else None
+        else TeacherPolicy(args.teacher_onnx, args.actor_threads) if args.teacher_onnx is not None else None
     )
 
     recorder = None
@@ -728,6 +775,8 @@ def main():
     print(f"xml={args.xml.resolve()}")
     if router_runtime is not None:
         print(f"router_bundle={router_runtime.bundle_path}")
+        print(f"low_height_corridor_half_width_m={args.low_height_corridor_half_width} (0=off)")
+        print(f"low_support_surface={args.low_support_surface} low_height_x_range={args.low_height_x_range}")
     print(f"start={args.start}  vx_limit={args.vx_limit}  wz_limit={args.wz_limit}  "
           f"real_time={args.real_time}  record={args.record}")
 
@@ -736,6 +785,7 @@ def main():
     command_state.start()
     try:
         with mujoco.viewer.launch_passive(model, data) as viewer:
+            next_viewer_sync = 0.
             while viewer.is_running():
                 wall_start = time.perf_counter()
                 command_state.update()
@@ -833,30 +883,61 @@ def main():
                     data, state.base_pos_w, state.base_rotation_w
                 )
                 privileged_height, hit = geometry.height, geometry.hit
+                selection = (select_support_surface(privileged, data, state.base_pos_w,
+                                                    state.base_rotation_w, geometry,
+                                                    query_x_range=args.low_height_x_range,
+                                                    query_half_width=args.low_height_corridor_half_width)
+                             if args.low_support_surface else SurfaceSelection(
+                                 geometry, np.zeros(1353, bool), np.zeros(1353, bool),
+                                 scan_xy_world(privileged, state.base_pos_w, state.base_rotation_w), 0.))
                 detection = None
                 if router_runtime is not None:
                     recurrent_inputs = assemble_asymmetric_teacher_inputs(
                         state, proprio, privileged_height
                     )
                     detection = detector.detect(
-                        geometry,
+                        selection.scan,
                         data,
                         state.base_pos_w,
                         state.base_rotation_w,
                         command,
                     )
+                    wheel_treads = wheel_tread_heights(privileged, data, data.xpos[wheel_body_ids])
                     action = router_runtime.step(
                         *recurrent_inputs,
                         detection,
                         state,
                         data.xpos[wheel_body_ids, 2],
                         wheel_contact_mask(model, data, wheel_body_ids),
+                        low_height_map=selection.scan.height.reshape(33, 41).T[None],
+                        wheel_support_z=wheel_treads,
                     )
                 else:
                     teacher_obs = assemble_teacher_1413(
                         state, proprio, privileged_height
                     )
                     action = policy(teacher_obs)
+
+                actual_actor_height = (router_runtime.last_actor_height_map if router_runtime is not None
+                                       else privileged_height.reshape(33, 41).T[None])
+                if args.height_debug_log and sample % args.height_debug_every == 0:
+                    debug = height_debug_record(geometry, selection, actual_actor_height, state.base_pos_w)
+                    debug.update(step=sample, sim_time_s=float(data.time),
+                                 base_pos_w=state.base_pos_w.tolist(), command=command.tolist(),
+                                 mode=router_runtime.router.mode.name if router_runtime else "SINGLE",
+                                 low_support_surface=args.low_support_surface,
+                                 low_height_x_range=args.low_height_x_range,
+                                 low_height_half_width=args.low_height_corridor_half_width)
+                    if router_runtime is not None:
+                        debug["wheel_tread_z_w"] = [float(z) if np.isfinite(z) else None for z in wheel_treads]
+                        paused = router_runtime.router.paused_climb_mode
+                        debug["paused_climb_mode"] = paused.name if paused is not None else None
+                        debug["straddle_steps"] = router_runtime.router.straddle_steps
+                        debug["normal_straddle_steps"] = router_runtime.router.normal_straddle_steps
+                        debug["last_entry_reason"] = router_runtime.router.last_entry_reason
+                    args.height_debug_log.parent.mkdir(parents=True, exist_ok=True)
+                    with args.height_debug_log.open("a") as stream:
+                        stream.write(json.dumps(debug, allow_nan=False) + "\n")
 
                 if recorder is not None:
                     if student_map is None:
@@ -876,9 +957,14 @@ def main():
                     q, dq = data.qpos[7:23], data.qvel[6:22]
                     data.ctrl[:] = kp * (raw_pos - q) + kd * (raw_vel - dq)
                     mujoco.mj_step(model, data)
-                if args.detector_debug_vis and detection is not None:
-                    draw_detector_debug(viewer, detection)
-                viewer.sync()
+                now = time.perf_counter()
+                if now >= next_viewer_sync:
+                    with viewer.lock():
+                        viewer.user_scn.ngeom = 0
+                        if args.detector_debug_vis and detection is not None:
+                            draw_detector_debug(viewer, detection)
+                    viewer.sync()
+                    next_viewer_sync = time.perf_counter() + 1. / args.viewer_hz
 
                 if args.log_every and sample % args.log_every == 0:
                     if router_runtime is None:
@@ -888,10 +974,11 @@ def main():
                             f"\r[running] step={sample:6d} vx={command[0]:+.2f} "
                             f"vy={command[1]:+.2f} wz={command[2]:+.2f} "
                             f"mode={router_runtime.router.mode.name} "
+                            f"entry={router_runtime.router.last_entry_reason or '-'} "
                             f"detector={int(detection.has_target)} "
                             f"overhead={int(detection.overhead_rejected)} "
                             f"headroom={int(detection.upper_clearance_blocked)} "
-                            f"rise={detection.height_m:.3f}m "
+                            f"rise={detection.height_m:.4f}m "
                             f"base_z={state.base_pos_w[2]:.3f} ",
                             end="", flush=True,
                         )
