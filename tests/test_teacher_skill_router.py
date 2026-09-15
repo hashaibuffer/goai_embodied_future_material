@@ -224,19 +224,21 @@ def test_resume_straddled_tread_without_forward_target(pause_frames, resume_trea
 
 
 @pytest.mark.parametrize("treads,command,contacts,expected", [
-    ([.075, .075, 0., 0.], [.4, 0, 0], [True]*4, True),
-    ([.15, .15, .075, 0.], [.4, 0, 0], [True]*4, True),
-    ([.075, .075, .075, 0.], [.4, 0, 0], [True]*4, True),
-    ([0., 0., 0., 0.], [.4, 0, 0], [True]*4, False),
-    ([0., 0., .075, .075], [.4, 0, 0], [True]*4, False),
-    ([.3, .3, 0., 0.], [.4, 0, 0], [True]*4, False),
-    ([.075, .075, 0., 0.], [0, 0, 0], [True]*4, False),
-    ([.075, .075, 0., 0.], [-.4, 0, 0], [True]*4, False),
-    ([.075, .075, 0., 0.], [.4, 0, .5], [True]*4, False),
-    ([.075, .075, 0., 0.], [.4, 0, 0], [False, False, True, True], False),
-    ([.075, .075, np.nan, 0.], [.4, 0, 0], [True]*4, False),
+    ([.075, .075, 0., 0.], [.4, 0, 0], [True]*4, PolicyMode.LOW_STEP_SEQUENCE),
+    ([.15, .15, .075, 0.], [.4, 0, 0], [True]*4, PolicyMode.LOW_STEP_SEQUENCE),
+    ([.075, .075, .075, 0.], [.4, 0, 0], [True]*4, PolicyMode.LOW_STEP_SEQUENCE),
+    ([.16, .16, 0., 0.], [.4, 0, 0], [True]*4, PolicyMode.HIGH_CLIMB),
+    ([.30, .30, .15, 0.], [.4, 0, 0], [True]*4, PolicyMode.HIGH_CLIMB),
+    ([0., 0., 0., 0.], [.4, 0, 0], [True]*4, PolicyMode.NORMAL),
+    ([0., 0., .075, .075], [.4, 0, 0], [True]*4, PolicyMode.NORMAL),
+    ([.075, .075, 0., 0.], [0, 0, 0], [True]*4, PolicyMode.NORMAL),
+    ([.075, .075, 0., 0.], [-.4, 0, 0], [True]*4, PolicyMode.NORMAL),
+    ([.075, .075, 0., 0.], [.4, 0, .5], [True]*4, PolicyMode.NORMAL),
+    ([.075, .075, 0., 0.], [.4, 0, 0], [False, False, True, True], PolicyMode.NORMAL),
+    ([.30, .30, 0., 0.], [.4, 0, 0], [False, False, True, True], PolicyMode.NORMAL),
+    ([.075, .075, np.nan, 0.], [.4, 0, 0], [True]*4, PolicyMode.NORMAL),
 ])
-def test_normal_enters_low_from_treads_without_history_or_forward_target(treads, command, contacts, expected):
+def test_normal_enters_climb_from_treads_without_history_or_forward_target(treads, command, contacts, expected):
     from dataclasses import replace
     from types import SimpleNamespace
     contract = dict(height_split_m=.16, forward_min_x=.1, max_abs_y=.1, max_abs_yaw=.1,
@@ -249,9 +251,11 @@ def test_normal_enters_low_from_treads_without_history_or_forward_target(treads,
     for _ in range(2):
         assert router.select(command, detection, state, np.asarray(treads)+.11, contacts, treads) == PolicyMode.NORMAL
     mode = router.select(command, detection, state, np.asarray(treads)+.11, contacts, treads)
-    assert (mode == PolicyMode.LOW_STEP_SEQUENCE) == expected
-    if expected:
-        assert router.last_entry_reason == "normal_treads"
+    assert mode == expected
+    if expected in (PolicyMode.LOW_STEP_SEQUENCE, PolicyMode.HIGH_CLIMB):
+        assert router.last_entry_reason == (
+            "normal_high_treads" if expected == PolicyMode.HIGH_CLIMB else "normal_low_treads"
+        )
         assert router.locked_upper_z_w == max(treads[:2])
         assert router.locked_direction_w is not None
         router.select(command, detection, state, np.asarray(treads)+.11, contacts, treads)

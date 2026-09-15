@@ -229,23 +229,32 @@ class S10TeacherSkillRouter:
 
         if self.mode == PolicyMode.NORMAL:
             # A tread already beneath the chassis is outside the forward fan.
-            # Bootstrap LOW from current physical support, without pause history.
-            # Bound the gap to LOW and require grounded front wheels; lifted
-            # wheels over a lower floor must not create an entry condition.
-            low_straddle = bool(
+            # Bootstrap LOW or HIGH from current physical support, without
+            # pause history.  The edge may already be behind the forward fan
+            # once both front wheels are on the upper tread.  Require grounded
+            # front wheels so lifted wheels over a lower floor cannot enter.
+            normal_straddle = bool(
                 command_in_skill and split_support
-                and np.max(tread[:2]) - np.min(tread[2:]) < self.height_split
                 and np.asarray(wheel_contact, bool).reshape(4)[:2].all()
                 and np.all(np.abs(np.asarray(wheel_pos_z)[:2] - tread[:2] - .11) <= .05)
             )
-            self.normal_straddle_steps = self.normal_straddle_steps + 1 if low_straddle else 0
+            self.normal_straddle_steps = self.normal_straddle_steps + 1 if normal_straddle else 0
             if self.normal_straddle_steps >= max(3, self.confirm_steps):
-                self.mode = PolicyMode.LOW_STEP_SEQUENCE
+                straddle_height = np.max(tread[:2]) - np.min(tread[2:])
+                self.mode = (
+                    PolicyMode.HIGH_CLIMB
+                    if straddle_height >= self.height_split
+                    else PolicyMode.LOW_STEP_SEQUENCE
+                )
                 # This is an under-body progress anchor, not a detected edge.
                 # It supplies successor-distance bookkeeping and the actual
                 # front tread height for rear-wheel completion checks.
                 self._lock_target(state.base_pos_w, np.max(tread[:2]), state.base_rotation_w)
-                self.last_entry_reason = "normal_treads"
+                self.last_entry_reason = (
+                    "normal_high_treads"
+                    if self.mode == PolicyMode.HIGH_CLIMB
+                    else "normal_low_treads"
+                )
                 self.arm_steps = 0
                 self.normal_straddle_steps = 0
                 return self.mode
