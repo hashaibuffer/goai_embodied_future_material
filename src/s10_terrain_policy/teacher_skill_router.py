@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from enum import IntEnum
 from pathlib import Path
 
@@ -61,6 +62,72 @@ def clamp_height_window(height_map, half_width_m=0., x_range=None):
     result = np.asarray([np.interp(query, x, row) for row in transposed.reshape(-1, 41)],
                         dtype=transposed.dtype).reshape(transposed.shape)
     return result.swapaxes(-1, -2).copy()
+
+
+class S10LowCommandAdapter:
+    """Reproduce the frozen model99 LowGoalCommand input contract.
+
+    LOW follows the world crossing direction captured when the Router locks a
+    tread.  The direction is transformed into the current body frame on every
+    control step, then converted to ``vx, vy, wz`` with model99's original
+    gain, limit and smoothing constants.  The operator command itself remains
+    unchanged for routing and for every other Actor.
+    """
+
+    def __init__(self, dt, max_speed_mps=.6, yaw_gain=.5, yaw_limit=.5,
+                 smoothing_tau_s=.2):
+        self.dt = float(dt)
+        self.max_speed_mps = float(max_speed_mps)
+        self.yaw_gain = float(yaw_gain)
+        self.yaw_limit = float(yaw_limit)
+        self.smoothing_tau_s = float(smoothing_tau_s)
+        if self.dt <= 0. or self.smoothing_tau_s <= 0.:
+            raise ValueError("LOW command adapter dt and smoothing tau must be positive")
+        if self.max_speed_mps <= 0. or self.yaw_limit <= 0.:
+            raise ValueError("LOW command adapter speed and yaw limit must be positive")
+        self.alpha = -math.expm1(-self.dt / self.smoothing_tau_s)
+        self.reset()
+
+    def reset(self):
+        self.active = False
+        self.locked_direction_w = np.zeros(2, np.float64)
+        self.command_b = np.zeros(3, np.float64)
+
+    def update(self, raw_command_b, base_rotation_w, active, latched_direction_w):
+        raw = np.asarray(raw_command_b, np.float64).reshape(3)
+        if not active:
+            self.reset()
+            return np.zeros(3, np.float32)
+
+        candidate = np.asarray(latched_direction_w, np.float64).reshape(-1)[:2]
+        norm = float(np.linalg.norm(candidate))
+        if not self.active:
+            if norm <= 1.e-6:
+                raise RuntimeError("LOW entered without a valid latched world direction")
+            self.locked_direction_w = candidate / norm
+
+        rotation = np.asarray(base_rotation_w, np.float64).reshape(3, 3)
+        yaw = float(np.arctan2(rotation[1, 0], rotation[0, 0]))
+        cosine, sine = math.cos(yaw), math.sin(yaw)
+        direction_b = np.asarray([
+            cosine * self.locked_direction_w[0] + sine * self.locked_direction_w[1],
+            -sine * self.locked_direction_w[0] + cosine * self.locked_direction_w[1],
+        ])
+        heading_error = float(np.arctan2(direction_b[1], direction_b[0]))
+        speed = min(float(np.linalg.norm(raw[:2])), self.max_speed_mps)
+        desired = np.asarray([
+            speed * math.cos(heading_error),
+            speed * math.sin(heading_error),
+            np.clip(self.yaw_gain * heading_error, -self.yaw_limit, self.yaw_limit),
+        ])
+        smoothed = self.command_b + self.alpha * (desired - self.command_b)
+        smoothed_xy_norm = float(np.linalg.norm(smoothed[:2]))
+        if smoothed_xy_norm > 1.e-9:
+            smoothed[:2] *= speed / smoothed_xy_norm
+        next_command = desired if not self.active else smoothed
+        self.command_b = next_command
+        self.active = True
+        return next_command.astype(np.float32)
 
 
 class RecurrentOnnxActor:
@@ -143,6 +210,7 @@ class S10TeacherSkillRouter:
         self.wheel_confirmed = np.zeros(4, dtype=bool)
         self.pending_successor = None
         self.just_entered_recovery = False
+        self.normal_handoff_settling = False
         self.paused_climb_mode = None
         self.straddle_steps = 0
         self.normal_straddle_steps = 0
@@ -159,16 +227,20 @@ class S10TeacherSkillRouter:
     def _strict_zero(command) -> bool:
         return bool(np.all(np.abs(command) <= 1.0e-6))
 
-    def _lock(self, detection, base_rotation_w) -> None:
+    def _lock(self, detection, base_rotation_w, command_b) -> None:
         self._lock_target(detection.edge_segment_w.mean(axis=0),
-                          float(detection.upper_z_w), base_rotation_w)
+                          float(detection.upper_z_w), base_rotation_w, command_b)
         self.last_entry_reason = "forward_detector"
 
-    def _lock_target(self, center_w, upper_z_w, base_rotation_w) -> None:
+    def _lock_target(self, center_w, upper_z_w, base_rotation_w, command_b) -> None:
         self.paused_climb_mode = None
         self.locked_edge_center_w = np.asarray(center_w, float).copy()
         rotation = np.asarray(base_rotation_w, np.float64).reshape(3, 3)
-        direction = rotation[:2, 0].copy()
+        command_xy = np.asarray(command_b, np.float64).reshape(3)[:2]
+        # Match Isaac's command_world contract: the accepted body-frame XY
+        # command, not merely the chassis forward axis, becomes immutable in
+        # world coordinates for this target lifecycle.
+        direction = rotation[:2, :2] @ command_xy
         direction /= max(1.0e-9, float(np.linalg.norm(direction)))
         self.locked_direction_w = direction
         self.locked_upper_z_w = float(upper_z_w)
@@ -184,6 +256,17 @@ class S10TeacherSkillRouter:
         self.recovery_stable_steps = 0
         self.just_entered_recovery = True
 
+    def _complete_to_normal(self) -> None:
+        """Finish a physically confirmed climb without invoking RECOVERY."""
+        self.mode = PolicyMode.NORMAL
+        self.mode_steps = 0
+        self.arm_steps = 0
+        self.successor_wait_steps = 0
+        self.locked_edge_center_w = None
+        self.locked_direction_w = None
+        self.pending_successor = None
+        self.normal_handoff_settling = False
+
     def _recovery_ready(self, state) -> bool:
         rotation = np.asarray(state.base_rotation_w, np.float64).reshape(3, 3)
         pitch = float(np.arcsin(np.clip(-rotation[2, 0], -1.0, 1.0)))
@@ -194,6 +277,12 @@ class S10TeacherSkillRouter:
             and abs(pitch) <= np.deg2rad(15.0)
             and abs(state.base_lin_vel_b[2]) <= 0.15
             and np.linalg.norm(state.base_ang_vel_b[:2]) <= 0.50
+            # A four-wheel posture can still be sliding or yawing on the top
+            # tread.  Handing that state directly to a cold NORMAL actor is
+            # the visible post-climb turn seen in GUI playback.  Reuse the
+            # Router's deployed pure-forward envelope as the handoff gate.
+            and abs(state.base_lin_vel_b[1]) <= self.max_y
+            and abs(state.base_ang_vel_b[2]) <= self.max_yaw
         )
 
     def select(
@@ -201,6 +290,7 @@ class S10TeacherSkillRouter:
     ) -> PolicyMode:
         command = np.asarray(command, np.float64).reshape(3)
         self.just_entered_recovery = False
+        self.normal_handoff_settling = False
         command_in_skill = self._command_in_skill(command)
         strict_zero = self._strict_zero(command)
         # Only resume a previously interrupted climb, never infer a new HIGH
@@ -249,7 +339,12 @@ class S10TeacherSkillRouter:
                 # This is an under-body progress anchor, not a detected edge.
                 # It supplies successor-distance bookkeeping and the actual
                 # front tread height for rear-wheel completion checks.
-                self._lock_target(state.base_pos_w, np.max(tread[:2]), state.base_rotation_w)
+                self._lock_target(
+                    state.base_pos_w,
+                    np.max(tread[:2]),
+                    state.base_rotation_w,
+                    command,
+                )
                 self.last_entry_reason = (
                     "normal_high_treads"
                     if self.mode == PolicyMode.HIGH_CLIMB
@@ -266,7 +361,7 @@ class S10TeacherSkillRouter:
                         if detection.height_m >= self.height_split
                         else PolicyMode.LOW_STEP_SEQUENCE
                     )
-                    self._lock(detection, state.base_rotation_w)
+                    self._lock(detection, state.base_rotation_w, command)
                     self.arm_steps = 0
             else:
                 self.arm_steps = 0
@@ -310,28 +405,31 @@ class S10TeacherSkillRouter:
                     and self.mode == PolicyMode.LOW_STEP_SEQUENCE
                     and self.pending_successor.height_m < self.height_split
                 ):
-                    self._lock(self.pending_successor, state.base_rotation_w)
+                    self._lock(
+                        self.pending_successor, state.base_rotation_w, command
+                    )
                 elif self.pending_successor is not None:
-                    self._enter_recovery()
+                    self._complete_to_normal()
                 else:
+                    self.normal_handoff_settling = True
                     self.successor_wait_steps += 1
                     if self.successor_wait_steps >= self.successor_steps:
-                        self._enter_recovery()
+                        self._complete_to_normal()
             return self.mode
 
         self.mode_steps += 1
-        if not strict_zero:
-            self.mode = PolicyMode.NORMAL
+        if self._recovery_ready(state):
+            self.recovery_stable_steps += 1
         else:
-            if self._recovery_ready(state):
-                self.recovery_stable_steps += 1
-            else:
-                self.recovery_stable_steps = 0
-            if (
-                self.recovery_stable_steps >= self.recovery_hold_steps
-                or self.mode_steps >= self.recovery_timeout_steps
-            ):
-                self.mode = PolicyMode.NORMAL
+            self.recovery_stable_steps = 0
+        # Keep the operator command queued, but do not let a held-forward key
+        # bypass the physical stability contract after a climb.  RECOVERY sees
+        # zero command below and hands off after a continuous stable window.
+        if (
+            self.recovery_stable_steps >= self.recovery_hold_steps
+            or self.mode_steps >= self.recovery_timeout_steps
+        ):
+            self.mode = PolicyMode.NORMAL
         if self.mode == PolicyMode.NORMAL:
             self.mode_steps = 0
             self.arm_steps = 0
@@ -356,11 +454,27 @@ class TeacherSkillRuntime:
         self.bundle_path = bundle_path
         self.detector_contract = payload["detector"]
         self.router = S10TeacherSkillRouter(payload["router"], dt)
+        router_contract = payload["router"]
         self.low_forward_command_max_mps = float(
-            payload["router"].get("low_forward_command_max_mps", 0.6)
+            router_contract.get("low_forward_command_max_mps", 0.6)
         )
         if self.low_forward_command_max_mps <= 0.0:
             raise ValueError("Low forward command cap must be positive")
+        adapter_contract = router_contract.get("low_command_adapter")
+        if adapter_contract is None:
+            self.low_command_adapter = None
+        elif adapter_contract == "model99_latched_world_direction_v1":
+            self.low_command_adapter = S10LowCommandAdapter(
+                dt,
+                max_speed_mps=self.low_forward_command_max_mps,
+                yaw_gain=float(router_contract.get("low_command_yaw_gain", .5)),
+                yaw_limit=float(router_contract.get("low_command_yaw_limit", .5)),
+                smoothing_tau_s=float(
+                    router_contract.get("low_command_smoothing_tau_s", .2)
+                ),
+            )
+        else:
+            raise ValueError(f"unsupported LOW command adapter: {adapter_contract!r}")
         self.actors = {}
         for role in ROLE_NAMES:
             entry = payload["skills"][role]
@@ -371,6 +485,8 @@ class TeacherSkillRuntime:
 
     def reset(self) -> None:
         self.router.reset()
+        if self.low_command_adapter is not None:
+            self.low_command_adapter.reset()
         for actor in self.actors.values():
             actor.reset()
 
@@ -390,18 +506,38 @@ class TeacherSkillRuntime:
                 else self.router.select(*router_args, wheel_support_z))
         # A recurrent skill owns history only while it owns the robot.  Do not
         # let dormant experts integrate commands/terrain from another skill:
-        # keep them at zero state and execute only the selected Actor.
+        # keep them at zero state. NORMAL deliberately shadow-runs during the
+        # final successful support-confirmation window and during abnormal
+        # RECOVERY so neither handoff cold-starts its GRU.
+        normal_handoff_settling = bool(
+            getattr(self.router, "normal_handoff_settling", False)
+        )
         for role, actor in self.actors.items():
-            if role != mode.name:
+            normal_shadow = role == "NORMAL" and (
+                mode == PolicyMode.RECOVERY
+                or normal_handoff_settling
+            )
+            if role != mode.name and not normal_shadow:
                 actor.reset()
+        low_command_adapter = getattr(self, "low_command_adapter", None)
         if mode == PolicyMode.RECOVERY:
             active_command = np.zeros(3, np.float32)
         else:
             active_command = np.asarray(command, np.float32).copy()
             if mode == PolicyMode.LOW_STEP_SEQUENCE:
-                active_command[0] = min(
-                    float(active_command[0]), self.low_forward_command_max_mps
-                )
+                if low_command_adapter is None:
+                    active_command[0] = min(
+                        float(active_command[0]), self.low_forward_command_max_mps
+                    )
+                else:
+                    active_command = low_command_adapter.update(
+                        command,
+                        state.base_rotation_w,
+                        True,
+                        self.router.locked_direction_w,
+                    )
+        if mode != PolicyMode.LOW_STEP_SEQUENCE and low_command_adapter is not None:
+            low_command_adapter.update(command, state.base_rotation_w, False, None)
         actor_height = height_map
         # Legacy low_* names are retained for command/API compatibility.
         # All three locomotion actors consume the same selected surface and
@@ -413,4 +549,17 @@ class TeacherSkillRuntime:
                 getattr(self, "low_height_x_range", None),
             )
         self.last_actor_height_map = actor_height
+        if mode == PolicyMode.RECOVERY:
+            normal_height = clamp_height_window(
+                low_height_map if low_height_map is not None else height_map,
+                self.low_height_corridor_half_width_m,
+                getattr(self, "low_height_x_range", None),
+            )
+            self.actors["NORMAL"](
+                np.asarray(command, np.float32), proprio, normal_height
+            )
+        elif normal_handoff_settling:
+            self.actors["NORMAL"](
+                np.asarray(command, np.float32), proprio, actor_height
+            )
         return self.actors[mode.name](active_command, proprio, actor_height)

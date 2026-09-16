@@ -31,6 +31,11 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--height-split-m", type=float, default=0.16)
     parser.add_argument("--low-forward-command-max-mps", type=float, default=0.6)
+    parser.add_argument(
+        "--low-command-adapter",
+        choices=("model99_latched_world_direction_v1",),
+        default=None,
+    )
     args = parser.parse_args()
     if args.height_split_m <= 0.0:
         parser.error("--height-split-m must be positive")
@@ -101,6 +106,13 @@ def main() -> None:
         },
         "skills": skills,
     }
+    if args.low_command_adapter is not None:
+        payload["router"].update({
+            "low_command_adapter": args.low_command_adapter,
+            "low_command_yaw_gain": 0.5,
+            "low_command_yaw_limit": 0.5,
+            "low_command_smoothing_tau_s": 0.20,
+        })
     output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(f"Wrote GoAI teacher Router bundle: {output}")
 

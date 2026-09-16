@@ -20,7 +20,12 @@ from mujoco_teacher import (
     assemble_asymmetric_teacher_inputs,
     assemble_official_57,
 )
-from teacher_skill_router import PolicyMode, S10TeacherSkillRouter, TeacherSkillRuntime
+from teacher_skill_router import (
+    PolicyMode,
+    S10LowCommandAdapter,
+    S10TeacherSkillRouter,
+    TeacherSkillRuntime,
+)
 from teacher_skill_router import clamp_height_corridor, clamp_height_window
 
 
@@ -148,7 +153,7 @@ def test_suspended_slab_is_rejected_by_layered_clearance_rays():
     assert not detection.has_target
 
 
-def test_router_uses_confirmed_per_wheel_support_and_operator_override():
+def test_router_returns_normal_directly_after_confirmed_success():
     contract = {
         "height_split_m": .16,
         "low_forward_command_max_mps": .6,
@@ -180,9 +185,136 @@ def test_router_uses_confirmed_per_wheel_support_and_operator_override():
         mode = router.select(
             [.3, 0, 0], detection, state, wheel_z, np.ones(4, bool)
         )
-    assert mode == PolicyMode.RECOVERY
-    mode = router.select([.3, 0, 0], detection, state, wheel_z, np.ones(4, bool))
     assert mode == PolicyMode.NORMAL
+    assert not router.just_entered_recovery
+
+
+def test_model99_low_command_adapter_tracks_latched_world_direction():
+    adapter = S10LowCommandAdapter(.02, max_speed_mps=.6, yaw_gain=.5,
+                                   yaw_limit=.5, smoothing_tau_s=.2)
+    yaw = np.deg2rad(10.)
+    rotation = np.asarray([
+        [np.cos(yaw), -np.sin(yaw), 0.],
+        [np.sin(yaw), np.cos(yaw), 0.],
+        [0., 0., 1.],
+    ])
+    actual = adapter.update([.4, 0., 0.], rotation, True, [1., 0.])
+    expected = np.asarray([
+        .4 * np.cos(yaw), -.4 * np.sin(yaw), -.5 * yaw,
+    ])
+    np.testing.assert_allclose(actual, expected, atol=1.e-6)
+    adapter.update([.4, 0., 0.], rotation, False, None)
+    assert not adapter.active
+    np.testing.assert_array_equal(adapter.command_b, np.zeros(3))
+
+
+def test_runtime_wires_adapted_command_only_to_model99_low_actor():
+    from types import SimpleNamespace
+
+    class FakeRouter:
+        mode = PolicyMode.LOW_STEP_SEQUENCE
+        locked_direction_w = np.asarray([1., 0.])
+        normal_handoff_settling = False
+
+        def select(self, *_args):
+            return self.mode
+
+    class FakeActor:
+        def __init__(self):
+            self.calls = []
+        def reset(self):
+            pass
+        def __call__(self, command, _proprio, _height):
+            self.calls.append(np.asarray(command).copy())
+            return np.zeros(16, np.float32)
+
+    runtime = object.__new__(TeacherSkillRuntime)
+    runtime.router = FakeRouter()
+    runtime.low_forward_command_max_mps = .6
+    runtime.low_command_adapter = S10LowCommandAdapter(.02)
+    runtime.low_height_corridor_half_width_m = 0.
+    runtime.low_height_x_range = None
+    runtime.actors = {mode.name: FakeActor() for mode in PolicyMode}
+    yaw = np.deg2rad(10.)
+    state = SimpleNamespace(base_rotation_w=np.asarray([
+        [np.cos(yaw), -np.sin(yaw), 0.],
+        [np.sin(yaw), np.cos(yaw), 0.],
+        [0., 0., 1.],
+    ]))
+    raw = np.asarray([.4, 0., 0.], np.float32)
+    raw_before = raw.copy()
+    runtime.step(raw, np.zeros(57), np.zeros((1, 41, 33)),
+                 object(), state, np.zeros(4), np.zeros(4, bool))
+    expected = [.4 * np.cos(yaw), -.4 * np.sin(yaw), -.5 * yaw]
+    np.testing.assert_allclose(
+        runtime.actors["LOW_STEP_SEQUENCE"].calls[-1], expected, atol=1.e-6
+    )
+    np.testing.assert_array_equal(raw, raw_before)
+    assert not runtime.actors["NORMAL"].calls
+
+
+def test_router_locks_actual_command_xy_in_world_not_only_body_forward():
+    from types import SimpleNamespace
+
+    contract = dict(
+        height_split_m=.16, forward_min_x=.1, max_abs_y=.1,
+        max_abs_yaw=.1, detector_confirm_s=.02, attempt_timeout_s=12.,
+        successor_search_s=.2, recovery_hold_s=.2,
+        recovery_timeout_s=5., recovery_base_height_m=.35,
+    )
+    router = S10TeacherSkillRouter(contract, .02)
+    yaw = np.deg2rad(30.)
+    rotation = np.asarray([
+        [np.cos(yaw), -np.sin(yaw), 0.],
+        [np.sin(yaw), np.cos(yaw), 0.],
+        [0., 0., 1.],
+    ])
+    state = SimpleNamespace(base_rotation_w=rotation)
+    detection = _detect(
+        '<geom name="step" type="box" pos=".9 0 .05" size=".5 .6 .05" group="0"/>'
+    )
+    command = np.asarray([.3, .05, 0.])
+    assert router.select(
+        command, detection, state, np.zeros(4), np.zeros(4, bool)
+    ) == PolicyMode.LOW_STEP_SEQUENCE
+    expected = rotation[:2, :2] @ command[:2]
+    expected /= np.linalg.norm(expected)
+    np.testing.assert_allclose(router.locked_direction_w, expected, atol=1.e-12)
+
+
+def test_recovery_blocks_normal_handoff_while_yawing_or_sliding_laterally():
+    from types import SimpleNamespace
+
+    contract = dict(
+        height_split_m=.16, forward_min_x=.1, max_abs_y=.1,
+        max_abs_yaw=.1, detector_confirm_s=.04, attempt_timeout_s=12.,
+        successor_search_s=.2, recovery_hold_s=.2,
+        recovery_timeout_s=5., recovery_base_height_m=.35,
+    )
+    router = S10TeacherSkillRouter(contract, .02)
+    router.mode = PolicyMode.RECOVERY
+    unstable = SimpleNamespace(
+        base_rotation_w=np.eye(3), base_pos_w=np.array([0., 0., .4]),
+        base_lin_vel_b=np.array([.3, .2, 0.]),
+        base_ang_vel_b=np.array([0., 0., .2]),
+    )
+    unused = object()
+    for _ in range(router.recovery_hold_steps + 2):
+        assert router.select(
+            [.3, 0, 0], unused, unstable, np.zeros(4), np.zeros(4, bool)
+        ) == PolicyMode.RECOVERY
+    stable = SimpleNamespace(
+        base_rotation_w=np.eye(3), base_pos_w=np.array([0., 0., .4]),
+        base_lin_vel_b=np.array([.3, 0., 0.]),
+        base_ang_vel_b=np.zeros(3),
+    )
+    for _ in range(router.recovery_hold_steps - 1):
+        assert router.select(
+            [.3, 0, 0], unused, stable, np.zeros(4), np.zeros(4, bool)
+        ) == PolicyMode.RECOVERY
+    assert router.select(
+        [.3, 0, 0], unused, stable, np.zeros(4), np.zeros(4, bool)
+    ) == PolicyMode.NORMAL
 
 
 @pytest.mark.parametrize("pause_frames", [3, 40, 300])
@@ -261,7 +393,7 @@ def test_normal_enters_climb_from_treads_without_history_or_forward_target(tread
         router.select(command, detection, state, np.asarray(treads)+.11, contacts, treads)
 
 
-def test_runtime_executes_only_selected_actor_and_resets_dormant_grus():
+def test_runtime_shadows_normal_only_during_recovery_and_resets_other_dormant_grus():
     class FakeRouter:
         mode = PolicyMode.HIGH_CLIMB
 
@@ -310,7 +442,21 @@ def test_runtime_executes_only_selected_actor_and_resets_dormant_grus():
     np.testing.assert_array_equal(
         runtime.actors["RECOVERY"].calls[-1], np.zeros(3)
     )
+    np.testing.assert_allclose(
+        runtime.actors["NORMAL"].calls[-1], np.asarray([.3, 0, 0])
+    )
+    # NORMAL keeps and advances its hidden state during RECOVERY so its first
+    # controlling frame is not a zero-hidden cold start.
+    assert runtime.actors["NORMAL"].reset_count == 1
     assert runtime.actors["HIGH_CLIMB"].reset_count == 1
+
+    runtime.router.mode = PolicyMode.NORMAL
+    runtime.step(
+        np.asarray([.3, 0, 0]), np.zeros(57), np.zeros((1, 41, 33)),
+        unused, unused, np.zeros(4), np.zeros(4, bool),
+    )
+    assert len(runtime.actors["NORMAL"].calls) == 2
+    assert runtime.actors["NORMAL"].reset_count == 1
 
     runtime.router.mode = PolicyMode.LOW_STEP_SEQUENCE
     runtime.step(
