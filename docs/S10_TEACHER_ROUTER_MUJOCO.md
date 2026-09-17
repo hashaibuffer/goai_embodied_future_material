@@ -1,5 +1,12 @@
 # S10四教师Router的MuJoCo整赛道测试
 
+2026-09-17：保留原HIGH model900，HIGH Actor输入使用
+`vx_actor=min(vx_user, 0.4)`；1.0映射到0.4 m/s，小指令不放大，零/倒车及vy/wz不变。
+Router/Detector及NORMAL预热仍使用原始命令，退出HIGH后NORMAL恢复原始1.0。
+bundle字段`high_forward_command_max_mps=0.4`，旧bundle缺字段也默认0.4；生成器同名CLI可配置。
+0.4采用保留的model900/model49路线已有测试输入，不是全速度范围最优或GoAI GUI成功率保证。
+只改部署命令，不训练、不替换ONNX。容错model49仍保留，尚未替换当前GoAI的model900。
+
 这条链路只用于在GoAI仓库的真实MuJoCo比赛场景中验证冻结教师，不加载Isaac赛道复刻。
 地图不写进bundle，也没有默认地图；每次启动必须显式传`--xml`。
 

@@ -1,0 +1,63 @@
+{
+  "actor_protocol": "s10-asymmetric-cnn-gru-1413-v1",
+  "created_at_utc": "2026-09-02T09:36:44.989413+00:00",
+  "detector": {
+    "clearance_height_above_base_m": [
+      -0.25,
+      0.0,
+      0.15
+    ],
+    "clearance_lateral_m": [
+      -0.22,
+      0.0,
+      0.22
+    ],
+    "clearance_range_m": 1.2,
+    "clearance_start_x_m": 0.25,
+    "corridor_half_width_m": 0.25,
+    "front_x_range_m": [
+      0.3,
+      1.2
+    ],
+    "landing_coverage_min": 0.8,
+    "landing_height_tolerance_m": 0.04,
+    "max_height_m": 0.45,
+    "min_height_m": 0.04,
+    "min_landing_depth_m": 0.2,
+    "min_landing_width_m": 0.42
+  },
+  "kind": "s10-goai-teacher-router-bundle",
+  "router": {
+    "attempt_timeout_s": 12.0,
+    "detector_confirm_s": 0.04,
+    "forward_min_x": 0.1,
+    "height_split_m": 0.16,
+    "low_forward_command_max_mps": 0.6,
+    "high_forward_command_max_mps": 0.4,
+    "max_abs_y": 0.1,
+    "max_abs_yaw": 0.1,
+    "recovery_base_height_m": 0.35,
+    "recovery_hold_s": 0.2,
+    "recovery_timeout_s": 5.0,
+    "successor_search_s": 0.2
+  },
+  "schema_version": 1,
+  "skills": {
+    "HIGH_CLIMB": {
+      "path": "high_climb_model900.onnx",
+      "sha256": "322403d4a77cadb4bebbb2b6ce06874a4b68706739f76bc7374edec427c5d2e3"
+    },
+    "LOW_STEP_SEQUENCE": {
+      "path": "low_step_sequence_model800.onnx",
+      "sha256": "261d30a33415e61219ad0189db3a39643f34c4a5bc24f1441a61459c654dc9e5"
+    },
+    "NORMAL": {
+      "path": "normal_model275.onnx",
+      "sha256": "15444579e7b320d97c3de3420688f72f141c85edd157b8dd288660d98b2e2c86"
+    },
+    "RECOVERY": {
+      "path": "recovery_model900.onnx",
+      "sha256": "27649570dfdc6df5705e7727da708a01e30550e1a0e87bdabd6d97e44efed92a"
+    }
+  }
+}

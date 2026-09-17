@@ -189,6 +189,42 @@ def test_router_returns_normal_directly_after_confirmed_success():
     assert not router.just_entered_recovery
 
 
+@pytest.mark.parametrize("vx", [1.0, 0.6, 0.4, 0.2, 0.0, -0.3])
+def test_high_command_cap_preserves_router_normal_shadow_and_user_command(vx):
+    from types import SimpleNamespace
+    raw = np.asarray([vx, .05, -.08], np.float32)
+    before = raw.copy()
+    class Actor:
+        def reset(self):
+            pass
+        def __call__(self, command, *_):
+            self.command = np.asarray(command).copy()
+            return np.zeros(16, np.float32)
+    class Router:
+        mode = PolicyMode.HIGH_CLIMB
+        normal_handoff_settling = True
+        def select(self, command, *_):
+            self.command = np.asarray(command).copy()
+            return self.mode
+    runtime = object.__new__(TeacherSkillRuntime)
+    runtime.router = Router()
+    runtime.high_forward_command_max_mps = .4
+    runtime.low_height_corridor_half_width_m = 0.
+    runtime.actors = {mode.name: Actor() for mode in PolicyMode}
+    args = (raw, np.zeros(57), np.zeros((1, 41, 33)), None, SimpleNamespace(), None, None)
+    runtime.step(*args)
+    expected = before.copy()
+    expected[0] = min(vx, .4)
+    np.testing.assert_allclose(runtime.actors['HIGH_CLIMB'].command, expected)
+    np.testing.assert_array_equal(runtime.router.command, before)
+    np.testing.assert_array_equal(runtime.actors['NORMAL'].command, before)
+    np.testing.assert_array_equal(raw, before)
+    runtime.router.mode = PolicyMode.NORMAL
+    runtime.router.normal_handoff_settling = False
+    runtime.step(*args)
+    np.testing.assert_array_equal(runtime.actors['NORMAL'].command, before)
+
+
 def test_model99_low_command_adapter_tracks_latched_world_direction():
     adapter = S10LowCommandAdapter(.02, max_speed_mps=.6, yaw_gain=.5,
                                    yaw_limit=.5, smoothing_tau_s=.2)

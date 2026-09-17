@@ -31,12 +31,15 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--height-split-m", type=float, default=0.16)
     parser.add_argument("--low-forward-command-max-mps", type=float, default=0.6)
+    parser.add_argument("--high-forward-command-max-mps", type=float, default=0.4)
     parser.add_argument(
         "--low-command-adapter",
         choices=("model99_latched_world_direction_v1",),
         default=None,
     )
     args = parser.parse_args()
+    if not 0.0 < args.high_forward_command_max_mps < float("inf"):
+        parser.error("--high-forward-command-max-mps must be finite and positive")
     if args.height_split_m <= 0.0:
         parser.error("--height-split-m must be positive")
     if args.low_forward_command_max_mps <= 0.0:
@@ -78,6 +81,7 @@ def main() -> None:
         "router": {
             "height_split_m": args.height_split_m,
             "low_forward_command_max_mps": args.low_forward_command_max_mps,
+            "high_forward_command_max_mps": args.high_forward_command_max_mps,
             "forward_min_x": 0.1,
             "max_abs_y": 0.1,
             "max_abs_yaw": 0.1,

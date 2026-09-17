@@ -455,6 +455,11 @@ class TeacherSkillRuntime:
         self.detector_contract = payload["detector"]
         self.router = S10TeacherSkillRouter(payload["router"], dt)
         router_contract = payload["router"]
+        self.high_forward_command_max_mps = float(
+            router_contract.get("high_forward_command_max_mps", 0.4)
+        )
+        if not np.isfinite(self.high_forward_command_max_mps) or self.high_forward_command_max_mps <= 0.0:
+            raise ValueError("HIGH forward command cap must be finite and positive")
         self.low_forward_command_max_mps = float(
             router_contract.get("low_forward_command_max_mps", 0.6)
         )
@@ -524,6 +529,13 @@ class TeacherSkillRuntime:
             active_command = np.zeros(3, np.float32)
         else:
             active_command = np.asarray(command, np.float32).copy()
+            if mode == PolicyMode.HIGH_CLIMB:
+                # Adapt only the expert input; routing and NORMAL shadow keep
+                # the user's raw command. Zero/reverse/lateral/yaw are unchanged.
+                active_command[0] = min(
+                    float(active_command[0]),
+                    getattr(self, "high_forward_command_max_mps", 0.4),
+                )
             if mode == PolicyMode.LOW_STEP_SEQUENCE:
                 if low_command_adapter is None:
                     active_command[0] = min(
