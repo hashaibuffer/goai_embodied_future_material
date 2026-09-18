@@ -64,6 +64,9 @@ Usage:
   python scripts/play_mujoco_teacher.py \
     --xml models/mjcf/S10_track_lidar.xml \
     --router-bundle artifacts/s10_teacher_router/teacher_router_bundle.json \
+    --low-support-surface \
+    --low-height-corridor-half-width 0.25 \
+    --low-height-x-range -0.4 1.2 \
     --detector-debug-vis
   python scripts/play_mujoco_teacher.py \
     --xml models/mjcf/S10_track_lidar.xml \
@@ -883,20 +886,30 @@ def main():
                     data, state.base_pos_w, state.base_rotation_w
                 )
                 privileged_height, hit = geometry.height, geometry.hit
-                selection = (select_support_surface(privileged, data, state.base_pos_w,
-                                                    state.base_rotation_w, geometry,
-                                                    query_x_range=args.low_height_x_range,
-                                                    query_half_width=args.low_height_corridor_half_width)
-                             if args.low_support_surface else SurfaceSelection(
-                                 geometry, np.zeros(1353, bool), np.zeros(1353, bool),
-                                 scan_xy_world(privileged, state.base_pos_w, state.base_rotation_w), 0.))
+                if args.low_support_surface:
+                    selection = select_support_surface(
+                        privileged, data, state.base_pos_w, state.base_rotation_w, geometry,
+                        max_step_m=.18,
+                        query_x_range=args.low_height_x_range,
+                        query_half_width=args.low_height_corridor_half_width,
+                    )
+                    high_selection = select_support_surface(
+                        privileged, data, state.base_pos_w, state.base_rotation_w, geometry,
+                        max_step_m=float(router_runtime.detector_contract["max_height_m"]),
+                        query_x_range=args.low_height_x_range,
+                        query_half_width=args.low_height_corridor_half_width,
+                    )
+                else:
+                    selection = high_selection = SurfaceSelection(
+                        geometry, np.zeros(1353, bool), np.zeros(1353, bool),
+                        scan_xy_world(privileged, state.base_pos_w, state.base_rotation_w), 0.)
                 detection = None
                 if router_runtime is not None:
                     recurrent_inputs = assemble_asymmetric_teacher_inputs(
                         state, proprio, privileged_height
                     )
                     detection = detector.detect(
-                        selection.scan,
+                        high_selection.scan,
                         data,
                         state.base_pos_w,
                         state.base_rotation_w,
@@ -910,6 +923,7 @@ def main():
                         data.xpos[wheel_body_ids, 2],
                         wheel_contact_mask(model, data, wheel_body_ids),
                         low_height_map=selection.scan.height.reshape(33, 41).T[None],
+                        high_height_map=high_selection.scan.height.reshape(33, 41).T[None],
                         wheel_support_z=wheel_treads,
                     )
                 else:
@@ -921,7 +935,17 @@ def main():
                 actual_actor_height = (router_runtime.last_actor_height_map if router_runtime is not None
                                        else privileged_height.reshape(33, 41).T[None])
                 if args.height_debug_log and sample % args.height_debug_every == 0:
-                    debug = height_debug_record(geometry, selection, actual_actor_height, state.base_pos_w)
+                    actor_selection = (
+                        high_selection
+                        if router_runtime is not None
+                        and router_runtime.router.mode.name == "HIGH_CLIMB"
+                        else selection
+                    )
+                    debug = height_debug_record(
+                        geometry, actor_selection, actual_actor_height, state.base_pos_w
+                    )
+                    debug["low_connected_count"] = int(selection.connected.sum())
+                    debug["high_connected_count"] = int(high_selection.connected.sum())
                     debug.update(step=sample, sim_time_s=float(data.time),
                                  base_pos_w=state.base_pos_w.tolist(), command=command.tolist(),
                                  mode=router_runtime.router.mode.name if router_runtime else "SINGLE",
@@ -935,6 +959,7 @@ def main():
                         debug["straddle_steps"] = router_runtime.router.straddle_steps
                         debug["normal_straddle_steps"] = router_runtime.router.normal_straddle_steps
                         debug["last_entry_reason"] = router_runtime.router.last_entry_reason
+                        debug["last_transition_reason"] = router_runtime.router.last_transition_reason
                     args.height_debug_log.parent.mkdir(parents=True, exist_ok=True)
                     with args.height_debug_log.open("a") as stream:
                         stream.write(json.dumps(debug, allow_nan=False) + "\n")
@@ -975,6 +1000,7 @@ def main():
                             f"vy={command[1]:+.2f} wz={command[2]:+.2f} "
                             f"mode={router_runtime.router.mode.name} "
                             f"entry={router_runtime.router.last_entry_reason or '-'} "
+                            f"transition={router_runtime.router.last_transition_reason or '-'} "
                             f"detector={int(detection.has_target)} "
                             f"overhead={int(detection.overhead_rejected)} "
                             f"headroom={int(detection.upper_clearance_blocked)} "

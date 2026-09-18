@@ -1,28 +1,40 @@
 # S10四教师Router的MuJoCo整赛道测试
 
-2026-09-17：保留原HIGH model900，HIGH Actor输入使用
-`vx_actor=min(vx_user, 0.4)`；1.0映射到0.4 m/s，小指令不放大，零/倒车及vy/wz不变。
-Router/Detector及NORMAL预热仍使用原始命令，退出HIGH后NORMAL恢复原始1.0。
-bundle字段`high_forward_command_max_mps=0.4`，旧bundle缺字段也默认0.4；生成器同名CLI可配置。
-0.4采用保留的model900/model49路线已有测试输入，不是全速度范围最优或GoAI GUI成功率保证。
-只改部署命令，不训练、不替换ONNX。容错model49仍保留，尚未替换当前GoAI的model900。
+2026-09-18：主入口`teacher_router_bundle.json`已改为当前正式接线，不再绑定旧LOW
+model800；它与`teacher_router_low_command_events_model99.json`内容一致，LOW实际绑定
+`low_command_events_milestone_model99.onnx`。同时修正两处Router交接：四轮已确认且处于同一
+支撑面时，顶端松键/命令结束直接回NORMAL；连续台阶前轮已到下一踏面、后轮刚完成当前踏面时，
+允许推进LOW successor，不再被`split_support`阻塞。终端与JSONL中的
+`last_transition_reason`可区分正常完成、successor推进、零命令和超时。
+
+当前保留原HIGH model900。HIGH Actor只把正向`vx`裁剪到bundle中的
+`high_forward_command_max_mps=0.6`；小指令不放大，零命令、倒车以及`vy/wz`不变。
+Router、Detector及NORMAL预热仍使用操作者原始命令。这个裁剪是Actor输入适配，不代表实际
+运动速度恒为0.6 m/s，也不构成GoAI GUI通过结论。容错model49仍是待验收候选，未替换model900。
 
 这条链路只用于在GoAI仓库的真实MuJoCo比赛场景中验证冻结教师，不加载Isaac赛道复刻。
 地图不写进bundle，也没有默认地图；每次启动必须显式传`--xml`。
 
 ## 运行合同
 
-- NORMAL：T1 `model_17999`
+- NORMAL：`model_275`
 - HIGH_CLIMB：T4a `model_900`
-- LOW_STEP_SEQUENCE：当前已验收基线为T5 `model_800`；新一轮checkpoint是在该基座上训练的
-  轮—棱有界残差，外部ONNX输入协议不变
+- LOW_STEP_SEQUENCE：Low command-events `model_99`
 - RECOVERY：Recovery候选 `model_900`
 - Router安全分界：`<0.16 m`为Low，`>=0.16 m`为High
-- Router继续读取操作者原始命令；只有Low Actor收到的前进速度会裁剪到训练上限`0.6 m/s`，
-  NORMAL与High不裁剪，Low退出后原命令立即恢复。
-- 每个Actor独立保持128维GRU状态；每拍只执行当前接管的Actor，其他休眠Actor持续保持零状态，切换进入专家时不会继承无关路段历史。
-- 当前棱的四轮支撑分别连续确认3拍；四轮都曾确认后才允许寻找下一级或进入Recovery。
-- Recovery收到新的非零人工命令会立即交还NORMAL，最长占用5秒。
+- Router继续读取操作者原始命令。LOW Actor使用锁存的世界穿越方向生成其训练时的
+  `vx/vy/wz`输入，平移速度不超过`0.6 m/s`；HIGH Actor只把正向`vx`上限设为`0.6 m/s`。
+  NORMAL、Router、Detector和NORMAL预热仍读取原始命令。
+- LOW和HIGH都使用连通支撑面高度图。LOW按`0.18 m`最大相邻层差选择连续踏面；HIGH及
+  Detector按其`0.45 m`检测上限选择连续踏面，避免把0.23 m高台退化成悬空结构的原始首击面。
+- 每个Actor独立保持128维GRU状态。当前Actor运行；NORMAL在成功交接等待和RECOVERY期间预热，
+  其他休眠Actor清零，避免继承无关技能历史。
+- 当前棱的四轮支撑分别连续确认3拍。检测到下一低台阶后，即使前后轴正分处相邻踏面，也会
+  推进LOW锁存目标；只有没有successor且四轮处于同一支撑面时才完成到NORMAL。
+- LOW是纯前进过阶专家。LOW期间出现横移、转向、零命令或倒车时立即交给NORMAL，不进入
+  RECOVERY，也不继续锁存新的LOW successor。
+- LOW仅在12秒尝试超时时进入RECOVERY；HIGH仍保留零命令、不兼容命令和超时恢复路径。
+  RECOVERY连续稳定0.2秒后回NORMAL，最长占用5秒。成功登顶和LOW命令交接不经过RECOVERY。
 
 GoAI的非对称观测严格按训练顺序组装：
 
@@ -42,6 +54,9 @@ cd /home/hashai/Projects/DeepRobotics/goai_embodied_future_material
 python3 scripts/play_mujoco_teacher.py \
   --xml models/mjcf/S10_track_lidar.xml \
   --router-bundle artifacts/s10_teacher_router/teacher_router_bundle.json \
+  --low-support-surface \
+  --low-height-corridor-half-width 0.25 \
+  --low-height-x-range -0.4 1.2 \
   --detector-debug-vis \
   --terrain-id official_track \
   --real-time
@@ -88,7 +103,7 @@ router_bundle=/.../artifacts/s10_teacher_router/teacher_router_bundle.json
 低层命中 + 上层命中 -> 台阶位于低净空区域，保留台阶候选并显示净空告警
 ```
 
-终端同步输出当前`mode`、`detector`、`overhead`、`headroom`和`rise`。其中
+终端同步输出当前`mode`、`entry`、`transition`、`detector`、`overhead`、`headroom`和`rise`。其中
 `headroom=1`只表示上层通道被占据；`overhead=1`才表示该候选已被悬空障碍规则拒绝。
 
 ## 重新导出

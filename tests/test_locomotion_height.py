@@ -68,6 +68,29 @@ def test_stairs_below_upper_slab_are_preserved():
         np.testing.assert_allclose(result.scan.hit_z_w[mask], (i+1)*.075, atol=1e-7)
 
 
+def test_high_selector_reaches_23cm_tread_below_slab_while_low_selector_does_not():
+    model = mujoco.MjModel.from_xml_string('''<mujoco><worldbody>
+      <geom type="plane" size="10 10 .1"/>
+      <geom type="box" pos=".9 0 .115" size=".5 1 .115"/>
+      <geom type="box" pos=".9 0 .9" size=".8 1 .05"/>
+    </worldbody></mujoco>''')
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    scanner = PrivilegedHeightScanner(model)
+    pos = np.asarray([0., 0., .42])
+    raw = scanner.scan_geometry(data, pos, np.eye(3))
+    kwargs = dict(query_x_range=[-.4, 1.2], query_half_width=.25)
+    low = select_support_surface(scanner, data, pos, np.eye(3), raw, max_step_m=.18, **kwargs)
+    high = select_support_surface(scanner, data, pos, np.eye(3), raw, max_step_m=.45, **kwargs)
+    mask = ((scanner.local_xy[:, 0] >= .5) & (scanner.local_xy[:, 0] <= 1.2)
+            & (np.abs(scanner.local_xy[:, 1]) <= .25))
+    np.testing.assert_allclose(raw.hit_z_w[mask], .95)
+    np.testing.assert_allclose(low.scan.hit_z_w[mask], .95)
+    np.testing.assert_allclose(high.scan.hit_z_w[mask], .23)
+    assert not low.connected[mask].any()
+    assert high.connected[mask].all()
+
+
 def test_windowed_rescan_matches_full_selection_where_actor_and_detector_read():
     objects = '<geom type="box" size="1.4 2 .05" pos="1.2 0 1.0"/>'
     scanner, pos, raw, full = scene(objects)

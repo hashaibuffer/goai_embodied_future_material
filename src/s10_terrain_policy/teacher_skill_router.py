@@ -215,6 +215,7 @@ class S10TeacherSkillRouter:
         self.straddle_steps = 0
         self.normal_straddle_steps = 0
         self.last_entry_reason = None
+        self.last_transition_reason = None
 
     def _command_in_skill(self, command) -> bool:
         return bool(
@@ -250,13 +251,14 @@ class S10TeacherSkillRouter:
         self.wheel_confirmed.fill(False)
         self.pending_successor = None
 
-    def _enter_recovery(self) -> None:
+    def _enter_recovery(self, reason: str) -> None:
         self.mode = PolicyMode.RECOVERY
         self.mode_steps = 0
         self.recovery_stable_steps = 0
         self.just_entered_recovery = True
+        self.last_transition_reason = reason
 
-    def _complete_to_normal(self) -> None:
+    def _complete_to_normal(self, reason: str) -> None:
         """Finish a physically confirmed climb without invoking RECOVERY."""
         self.mode = PolicyMode.NORMAL
         self.mode_steps = 0
@@ -266,6 +268,7 @@ class S10TeacherSkillRouter:
         self.locked_direction_w = None
         self.pending_successor = None
         self.normal_handoff_settling = False
+        self.last_transition_reason = reason
 
     def _recovery_ready(self, state) -> bool:
         rotation = np.asarray(state.base_rotation_w, np.float64).reshape(3, 3)
@@ -370,12 +373,14 @@ class S10TeacherSkillRouter:
         self.normal_straddle_steps = 0
         if self.mode in (PolicyMode.HIGH_CLIMB, PolicyMode.LOW_STEP_SEQUENCE):
             self.mode_steps += 1
-            if strict_zero or not command_in_skill or self.mode_steps >= self.attempt_steps:
-                if strict_zero:
-                    self.paused_climb_mode = self.mode
-                self._enter_recovery()
+            # LOW is the pure-forward crossing expert. Any command outside that
+            # envelope belongs to NORMAL, including zero, reverse, lateral and
+            # yaw commands; changing operator intent is not a recovery failure.
+            if self.mode == PolicyMode.LOW_STEP_SEQUENCE and (
+                strict_zero or not command_in_skill
+            ):
+                self._complete_to_normal("low_command_handoff")
                 return self.mode
-
             if detection.has_target:
                 next_center = detection.edge_segment_w.mean(axis=0)
                 advance = float(
@@ -399,22 +404,54 @@ class S10TeacherSkillRouter:
                 support_now, self.wheel_support_steps + 1, 0
             )
             self.wheel_confirmed |= self.wheel_support_steps >= 3
-            if self.wheel_confirmed.all() and not split_support:
+            edge_complete = bool(self.wheel_confirmed.all())
+            attempt_timed_out = self.mode_steps >= self.attempt_steps
+            if edge_complete:
+                # A released/incompatible command or the attempt deadline must
+                # not turn an already completed, level landing into a failure.
+                # This is the normal top-of-stair stop path.
+                if not split_support and (
+                    strict_zero or not command_in_skill or attempt_timed_out
+                ):
+                    self._complete_to_normal("confirmed_level_support")
+                    return self.mode
+
+                # On continuous stairs the front axle can already be on the
+                # next tread while the rear axle finishes the locked one.  The
+                # split-support posture is evidence for the successor, not a
+                # reason to block target progress.
                 if (
                     self.pending_successor is not None
                     and self.mode == PolicyMode.LOW_STEP_SEQUENCE
                     and self.pending_successor.height_m < self.height_split
+                    and command_in_skill
                 ):
                     self._lock(
                         self.pending_successor, state.base_rotation_w, command
                     )
-                elif self.pending_successor is not None:
-                    self._complete_to_normal()
-                else:
+                    self.last_transition_reason = "confirmed_low_successor"
+                elif self.pending_successor is not None and not split_support:
+                    self._complete_to_normal("successor_requires_reroute")
+                elif not split_support:
                     self.normal_handoff_settling = True
                     self.successor_wait_steps += 1
                     if self.successor_wait_steps >= self.successor_steps:
-                        self._complete_to_normal()
+                        self._complete_to_normal("confirmed_final_tread")
+            if self.mode in (PolicyMode.HIGH_CLIMB, PolicyMode.LOW_STEP_SEQUENCE) and (
+                strict_zero
+                or not command_in_skill
+                or attempt_timed_out
+            ):
+                if strict_zero:
+                    self.paused_climb_mode = self.mode
+                reason = (
+                    "zero_command"
+                    if strict_zero
+                    else "incompatible_command"
+                    if not command_in_skill
+                    else "attempt_timeout"
+                )
+                self._enter_recovery(reason)
             return self.mode
 
         self.mode_steps += 1
@@ -504,7 +541,7 @@ class TeacherSkillRuntime:
         state,
         wheel_pos_z,
         wheel_contact,
-        *, low_height_map=None, wheel_support_z=None,
+        *, low_height_map=None, high_height_map=None, wheel_support_z=None,
     ) -> np.ndarray:
         router_args = (command, detection, state, wheel_pos_z, wheel_contact)
         mode = (self.router.select(*router_args) if wheel_support_z is None
@@ -551,12 +588,20 @@ class TeacherSkillRuntime:
         if mode != PolicyMode.LOW_STEP_SEQUENCE and low_command_adapter is not None:
             low_command_adapter.update(command, state.base_rotation_w, False, None)
         actor_height = height_map
-        # Legacy low_* names are retained for command/API compatibility.
-        # All three locomotion actors consume the same selected surface and
-        # XY boundary extension; only RECOVERY retains the native map.
-        if mode in (PolicyMode.NORMAL, PolicyMode.LOW_STEP_SEQUENCE, PolicyMode.HIGH_CLIMB):
+        # NORMAL/LOW use the <=18 cm connected surface. HIGH receives a
+        # separately selected <=detector-max surface so a 23--45 cm tread under
+        # an overhead structure does not fall back to the first raw ray hit.
+        if mode in (PolicyMode.NORMAL, PolicyMode.LOW_STEP_SEQUENCE):
             actor_height = clamp_height_window(
                 low_height_map if low_height_map is not None else height_map,
+                self.low_height_corridor_half_width_m,
+                getattr(self, "low_height_x_range", None),
+            )
+        elif mode == PolicyMode.HIGH_CLIMB:
+            actor_height = clamp_height_window(
+                high_height_map if high_height_map is not None
+                else low_height_map if low_height_map is not None
+                else height_map,
                 self.low_height_corridor_half_width_m,
                 getattr(self, "low_height_x_range", None),
             )

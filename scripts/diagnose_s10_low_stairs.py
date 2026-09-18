@@ -133,6 +133,7 @@ def main():
                    "velocity_body": state.base_lin_vel_b.tolist(), "command": command.tolist(),
                    "mode": mode, "height_map": inputs[2].tolist(),
                    "last_entry_reason": runtime.router.last_entry_reason if runtime else None,
+                   "last_transition_reason": runtime.router.last_transition_reason if runtime else None,
                    "wheel_z": data.xpos[wheels, 2].tolist(),
                    "wheel_tread_z": [float(z) if np.isfinite(z) else None for z in tread],
                    "wheel_contact": wheel_contact_mask(model, data, wheels).tolist()}

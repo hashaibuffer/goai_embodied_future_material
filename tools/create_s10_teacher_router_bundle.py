@@ -31,7 +31,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--height-split-m", type=float, default=0.16)
     parser.add_argument("--low-forward-command-max-mps", type=float, default=0.6)
-    parser.add_argument("--high-forward-command-max-mps", type=float, default=0.4)
+    parser.add_argument("--high-forward-command-max-mps", type=float, default=0.6)
     parser.add_argument(
         "--low-command-adapter",
         choices=("model99_latched_world_direction_v1",),
