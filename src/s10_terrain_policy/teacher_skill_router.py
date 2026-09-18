@@ -209,9 +209,10 @@ class S10TeacherSkillRouter:
         self.wheel_support_steps = np.zeros(4, dtype=np.int32)
         self.wheel_confirmed = np.zeros(4, dtype=bool)
         self.pending_successor = None
+        self.high_successor_steps = 0
+        self.high_front_support_steps = 0
         self.just_entered_recovery = False
         self.normal_handoff_settling = False
-        self.paused_climb_mode = None
         self.straddle_steps = 0
         self.normal_straddle_steps = 0
         self.last_entry_reason = None
@@ -224,6 +225,14 @@ class S10TeacherSkillRouter:
             and abs(command[2]) <= self.max_yaw
         )
 
+    def high_successor_pending(self) -> bool:
+        """Whether LOW has already seen the next edge that belongs to HIGH."""
+        return bool(
+            self.mode == PolicyMode.LOW_STEP_SEQUENCE
+            and self.pending_successor is not None
+            and self.pending_successor.height_m >= self.height_split
+        )
+
     @staticmethod
     def _strict_zero(command) -> bool:
         return bool(np.all(np.abs(command) <= 1.0e-6))
@@ -234,7 +243,6 @@ class S10TeacherSkillRouter:
         self.last_entry_reason = "forward_detector"
 
     def _lock_target(self, center_w, upper_z_w, base_rotation_w, command_b) -> None:
-        self.paused_climb_mode = None
         self.locked_edge_center_w = np.asarray(center_w, float).copy()
         rotation = np.asarray(base_rotation_w, np.float64).reshape(3, 3)
         command_xy = np.asarray(command_b, np.float64).reshape(3)[:2]
@@ -250,6 +258,8 @@ class S10TeacherSkillRouter:
         self.wheel_support_steps.fill(0)
         self.wheel_confirmed.fill(False)
         self.pending_successor = None
+        self.high_successor_steps = 0
+        self.high_front_support_steps = 0
 
     def _enter_recovery(self, reason: str) -> None:
         self.mode = PolicyMode.RECOVERY
@@ -267,6 +277,8 @@ class S10TeacherSkillRouter:
         self.locked_edge_center_w = None
         self.locked_direction_w = None
         self.pending_successor = None
+        self.high_successor_steps = 0
+        self.high_front_support_steps = 0
         self.normal_handoff_settling = False
         self.last_transition_reason = reason
 
@@ -296,30 +308,13 @@ class S10TeacherSkillRouter:
         self.normal_handoff_settling = False
         command_in_skill = self._command_in_skill(command)
         strict_zero = self._strict_zero(command)
-        # Only resume a previously interrupted climb, never infer a new HIGH
-        # target from chassis pitch. Actual tread rays reject wheel-lift poses.
+        # 轮下几何用于判断跨层支撑；不能仅凭机身俯仰推断台阶。
         split_support = False
         if wheel_support_z is not None:
             tread = np.asarray(wheel_support_z, float).reshape(4)
             split_support = bool(np.isfinite(tread).all()
                                  and np.min(tread[:2]) - np.min(tread[2:]) >= .04)
         self.straddle_steps = self.straddle_steps + 1 if split_support else 0
-        if self.paused_climb_mode is not None:
-            if not strict_zero and not command_in_skill:
-                self.paused_climb_mode = None
-            elif command_in_skill and self.straddle_steps >= 3:
-                self.mode = self.paused_climb_mode
-                self.last_entry_reason = "paused_treads"
-                self.paused_climb_mode = None
-                self.mode_steps = 0
-                self.successor_wait_steps = 0
-                self.wheel_support_steps.fill(0)
-                self.wheel_confirmed.fill(False)
-                return self.mode
-            elif (command_in_skill and wheel_support_z is not None
-                  and np.isfinite(tread).all() and not split_support):
-                self.paused_climb_mode = None
-
         if self.mode == PolicyMode.NORMAL:
             # A tread already beneath the chassis is outside the forward fan.
             # Bootstrap LOW or HIGH from current physical support, without
@@ -373,22 +368,78 @@ class S10TeacherSkillRouter:
         self.normal_straddle_steps = 0
         if self.mode in (PolicyMode.HIGH_CLIMB, PolicyMode.LOW_STEP_SEQUENCE):
             self.mode_steps += 1
-            # LOW is the pure-forward crossing expert. Any command outside that
+            # Both climbing experts yield operator command changes to NORMAL.
+            # Any command outside the pure-forward
             # envelope belongs to NORMAL, including zero, reverse, lateral and
             # yaw commands; changing operator intent is not a recovery failure.
-            if self.mode == PolicyMode.LOW_STEP_SEQUENCE and (
-                strict_zero or not command_in_skill
-            ):
-                self._complete_to_normal("low_command_handoff")
+            # 人工松键/倒车/横移/转向立即归还NORMAL，只有尝试超时进入RECOVERY。
+            if strict_zero or not command_in_skill:
+                reason = ("high_command_handoff" if self.mode == PolicyMode.HIGH_CLIMB
+                          else "low_command_handoff")
+                self._complete_to_normal(reason)
                 return self.mode
-            if detection.has_target:
-                next_center = detection.edge_segment_w.mean(axis=0)
-                advance = float(
-                    (next_center[:2] - self.locked_edge_center_w[:2])
-                    @ self.locked_direction_w
+            # HIGH连续检测确认后冻结目标；视野丢失不撤销已确认的交接。
+            high_locked = (
+                self.high_successor_pending()
+                and self.high_successor_steps >= self.confirm_steps
+            )
+            if not high_locked:
+                high_seen = False
+                if detection.has_target:
+                    next_center = detection.edge_segment_w.mean(axis=0)
+                    advance = float(
+                        (next_center[:2] - self.locked_edge_center_w[:2])
+                        @ self.locked_direction_w
+                    )
+                    if advance >= 0.20:
+                        previous = self.pending_successor
+                        high_seen = bool(
+                            self.mode == PolicyMode.LOW_STEP_SEQUENCE
+                            and detection.height_m >= self.height_split
+                        )
+                        same_high = bool(
+                            high_seen and previous is not None
+                            and previous.height_m >= self.height_split
+                            and np.linalg.norm(next_center[:2]
+                                - previous.edge_segment_w.mean(axis=0)[:2]) <= .15
+                            and abs(detection.upper_z_w - previous.upper_z_w) <= .025
+                        )
+                        self.pending_successor = detection
+                        self.high_successor_steps = (
+                            self.high_successor_steps + 1 if same_high
+                            else 1 if high_seen else 0
+                        )
+                if not high_seen:
+                    if self.high_successor_pending():
+                        self.pending_successor = None
+                    self.high_successor_steps = 0
+                high_locked = (
+                    self.high_successor_pending()
+                    and self.high_successor_steps >= self.confirm_steps
                 )
-                if advance >= 0.20:
-                    self.pending_successor = detection
+
+            # LOW负责接近；双前轮必须同时接触锁存的HIGH顶面并连续确认3拍。
+            # 后轮不参与此门，避免紧邻台阶上等待四轮LOW完成而死锁。
+            front_supported = False
+            if high_locked and wheel_support_z is not None:
+                upper_z = self.pending_successor.upper_z_w
+                front_supported = bool(
+                    np.asarray(wheel_contact, bool)[:2].all()
+                    and np.isfinite(tread[:2]).all()
+                    and np.all(np.abs(tread[:2] - upper_z) <= .025)
+                    and np.all(np.abs(np.asarray(wheel_pos_z)[:2]
+                                      - tread[:2] - .11) <= .05)
+                )
+            self.high_front_support_steps = (
+                self.high_front_support_steps + 1 if front_supported else 0
+            )
+            if self.high_front_support_steps >= 3:
+                successor = self.pending_successor
+                self.mode = PolicyMode.HIGH_CLIMB
+                self._lock(successor, state.base_rotation_w, command)
+                self.last_entry_reason = "low_to_high_successor"
+                self.last_transition_reason = "confirmed_high_front_support"
+                return self.mode
 
             wheel_pos_z = np.asarray(wheel_pos_z, np.float64).reshape(4)
             wheel_contact = np.asarray(wheel_contact, bool).reshape(4)
@@ -410,9 +461,7 @@ class S10TeacherSkillRouter:
                 # A released/incompatible command or the attempt deadline must
                 # not turn an already completed, level landing into a failure.
                 # This is the normal top-of-stair stop path.
-                if not split_support and (
-                    strict_zero or not command_in_skill or attempt_timed_out
-                ):
+                if not split_support and attempt_timed_out:
                     self._complete_to_normal("confirmed_level_support")
                     return self.mode
 
@@ -430,6 +479,8 @@ class S10TeacherSkillRouter:
                         self.pending_successor, state.base_rotation_w, command
                     )
                     self.last_transition_reason = "confirmed_low_successor"
+                elif high_locked:
+                    pass  # Await front support on the latched HIGH tread.
                 elif self.pending_successor is not None and not split_support:
                     self._complete_to_normal("successor_requires_reroute")
                 elif not split_support:
@@ -437,21 +488,9 @@ class S10TeacherSkillRouter:
                     self.successor_wait_steps += 1
                     if self.successor_wait_steps >= self.successor_steps:
                         self._complete_to_normal("confirmed_final_tread")
-            if self.mode in (PolicyMode.HIGH_CLIMB, PolicyMode.LOW_STEP_SEQUENCE) and (
-                strict_zero
-                or not command_in_skill
-                or attempt_timed_out
-            ):
-                if strict_zero:
-                    self.paused_climb_mode = self.mode
-                reason = (
-                    "zero_command"
-                    if strict_zero
-                    else "incompatible_command"
-                    if not command_in_skill
-                    else "attempt_timeout"
-                )
-                self._enter_recovery(reason)
+            if (self.mode in (PolicyMode.HIGH_CLIMB, PolicyMode.LOW_STEP_SEQUENCE)
+                    and attempt_timed_out):
+                self._enter_recovery("attempt_timeout")
             return self.mode
 
         self.mode_steps += 1
@@ -470,9 +509,8 @@ class S10TeacherSkillRouter:
         if self.mode == PolicyMode.NORMAL:
             self.mode_steps = 0
             self.arm_steps = 0
-            if self.paused_climb_mode is None:
-                self.locked_edge_center_w = None
-                self.locked_direction_w = None
+            self.locked_edge_center_w = None
+            self.locked_direction_w = None
         return self.mode
 
 
@@ -546,20 +584,26 @@ class TeacherSkillRuntime:
         router_args = (command, detection, state, wheel_pos_z, wheel_contact)
         mode = (self.router.select(*router_args) if wheel_support_z is None
                 else self.router.select(*router_args, wheel_support_z))
-        # A recurrent skill owns history only while it owns the robot.  Do not
-        # let dormant experts integrate commands/terrain from another skill:
-        # keep them at zero state. NORMAL deliberately shadow-runs during the
-        # final successful support-confirmation window and during abnormal
-        # RECOVERY so neither handoff cold-starts its GRU.
+        # 各Actor独立持有GRU状态。休眠者清零；NORMAL在完成等待/恢复时预热，
+        # HIGH在待交接目标出现后预热，但只有当前模式的动作会发送给机器人。
         normal_handoff_settling = bool(
             getattr(self.router, "normal_handoff_settling", False)
+        )
+        high_successor_pending = getattr(
+            self.router, "high_successor_pending", None
+        )
+        high_handoff_arming = bool(
+            mode == PolicyMode.LOW_STEP_SEQUENCE
+            and high_successor_pending is not None
+            and high_successor_pending()
         )
         for role, actor in self.actors.items():
             normal_shadow = role == "NORMAL" and (
                 mode == PolicyMode.RECOVERY
                 or normal_handoff_settling
             )
-            if role != mode.name and not normal_shadow:
+            high_shadow = role == "HIGH_CLIMB" and high_handoff_arming
+            if role != mode.name and not normal_shadow and not high_shadow:
                 actor.reset()
         low_command_adapter = getattr(self, "low_command_adapter", None)
         if mode == PolicyMode.RECOVERY:
@@ -619,4 +663,18 @@ class TeacherSkillRuntime:
             self.actors["NORMAL"](
                 np.asarray(command, np.float32), proprio, actor_height
             )
+        if high_handoff_arming:
+            high_command = np.asarray(command, np.float32).copy()
+            high_command[0] = min(
+                float(high_command[0]),
+                getattr(self, "high_forward_command_max_mps", 0.4),
+            )
+            high_height = clamp_height_window(
+                high_height_map if high_height_map is not None
+                else low_height_map if low_height_map is not None
+                else height_map,
+                self.low_height_corridor_half_width_m,
+                getattr(self, "low_height_x_range", None),
+            )
+            self.actors["HIGH_CLIMB"](high_command, proprio, high_height)
         return self.actors[mode.name](active_command, proprio, actor_height)

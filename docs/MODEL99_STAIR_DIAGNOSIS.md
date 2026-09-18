@@ -28,7 +28,7 @@ Detector 走廊/净空线仍可使用。`--viewer-hz 30` 限制界面同步和 o
 ```bash
 python scripts/play_mujoco_teacher.py \
   --xml models/mjcf/S10_track_lidar.xml \
-  --router-bundle artifacts/s10_teacher_router/teacher_router_low_command_events_model99.json \
+  --router-bundle artifacts/s10_teacher_router/teacher_router_bundle.json \
   --start 33.165 15.18 2.09 1.500695 --vx-limit 1.0 \
   --low-support-surface --low-height-corridor-half-width .25 --low-height-x-range -.4 1.2 \
   --viewer-hz 30 --actor-threads 1 --real-time
@@ -82,7 +82,7 @@ Z 不直接进入这三个 Actor；只有 RECOVERY 输入保持原样。原始 4
 ```bash
 python scripts/play_mujoco_teacher.py \
   --xml models/mjcf/S10_track_lidar.xml \
-  --router-bundle artifacts/s10_teacher_router/teacher_router_low_command_events_model99.json \
+  --router-bundle artifacts/s10_teacher_router/teacher_router_bundle.json \
   --start 33.165 15.18 2.09 1.500695 \
   --vx-limit 0.4 \
   --low-support-surface \

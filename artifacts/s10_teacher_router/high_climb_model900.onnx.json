@@ -1,0 +1,41 @@
+{
+  "action_contract": "raw_clip_100",
+  "checkpoint": "/home/hashai/Projects/DeepRobotics/rl_training/checkpoints/s10_asymmetric_t4a_high_platform_climb_milestones/model_900.pt",
+  "checkpoint_sha256": "8346a7df8290fa0a2f73c9fd0978d532452d7f3fcba9f2440975dc3f8e681901",
+  "inputs": {
+    "command": [
+      "batch",
+      3
+    ],
+    "h_prev": [
+      "batch",
+      128
+    ],
+    "height_map": [
+      "batch",
+      1,
+      41,
+      33
+    ],
+    "proprio": [
+      "batch",
+      57
+    ]
+  },
+  "onnx_sha256": "322403d4a77cadb4bebbb2b6ce06874a4b68706739f76bc7374edec427c5d2e3",
+  "outputs": {
+    "actions": [
+      "batch",
+      16
+    ],
+    "h_next": [
+      "batch",
+      128
+    ]
+  },
+  "protocol": "s10-asymmetric-cnn-gru-1413-v1",
+  "torch_onnx_parity": {
+    "checked": true,
+    "max_abs_error": 5.4836273193359375e-06
+  }
+}

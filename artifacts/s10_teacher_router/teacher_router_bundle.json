@@ -48,8 +48,8 @@
   "schema_version": 1,
   "skills": {
     "HIGH_CLIMB": {
-      "path": "high_climb_model900.onnx",
-      "sha256": "322403d4a77cadb4bebbb2b6ce06874a4b68706739f76bc7374edec427c5d2e3"
+      "path": "high_climb_model49.onnx",
+      "sha256": "27cf1941da1b9ee3af8bab478f1ec3dc5693f6e960545baf177bd599ee2cce44"
     },
     "LOW_STEP_SEQUENCE": {
       "path": "low_command_events_milestone_model99.onnx",

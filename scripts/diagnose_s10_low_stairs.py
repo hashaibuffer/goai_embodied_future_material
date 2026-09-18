@@ -66,7 +66,7 @@ def main():
     model.opt.timestep = .001
     data = mujoco.MjData(model)
     base = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
-    bundle = ROOT / "artifacts/s10_teacher_router/teacher_router_low_command_events_model99.json"
+    bundle = ROOT / "artifacts/s10_teacher_router/teacher_router_bundle.json"
     payload = json.loads(bundle.read_text())
     entry = payload["skills"]["LOW_STEP_SEQUENCE"]
     actor_path = (bundle.parent / entry["path"]).resolve()

@@ -1,0 +1,42 @@
+{
+  "action_contract": "raw_clip_100",
+  "architecture": "base-cnn-gru-v1",
+  "checkpoint": "/home/hashai/Projects/DeepRobotics/rl_training/logs/rsl_rl/deeprobotics_s10_asymmetric_teacher/T4a-High-Platform-Tolerance/2026-09-16_18-14-19_high_platform_tolerance_parent_anchor_from_model900_20260916/model_49.pt",
+  "checkpoint_sha256": "83eea181ce9043a6999012571614a3c8222f7a5c59e2cb33fac4db20d0f25975",
+  "inputs": {
+    "command": [
+      "batch",
+      3
+    ],
+    "h_prev": [
+      "batch",
+      128
+    ],
+    "height_map": [
+      "batch",
+      1,
+      41,
+      33
+    ],
+    "proprio": [
+      "batch",
+      57
+    ]
+  },
+  "onnx_sha256": "27cf1941da1b9ee3af8bab478f1ec3dc5693f6e960545baf177bd599ee2cce44",
+  "outputs": {
+    "actions": [
+      "batch",
+      16
+    ],
+    "h_next": [
+      "batch",
+      128
+    ]
+  },
+  "protocol": "s10-asymmetric-cnn-gru-1413-v1",
+  "torch_onnx_parity": {
+    "checked": true,
+    "max_abs_error": 6.67572021484375e-06
+  }
+}

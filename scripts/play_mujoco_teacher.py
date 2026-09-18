@@ -28,7 +28,6 @@ combined vector, not a single-axis-at-a-time input:
   h                   stand back up IN PLACE (keep x/y/yaw, do not teleport)
   n                   teleport to the next route waypoint in a standing pose
   r                   reset episode: re-run StandUp from --start and clear command
-  p                   pause / resume physics stepping
   Ctrl+C / close window to quit
 
 Note: this reads raw keyboard state directly, the same source the official
@@ -179,7 +178,7 @@ class _EvdevBackend:
             _EvdevBackend._CODE_TO_CHAR = {
                 ecodes.KEY_W: "w", ecodes.KEY_S: "s", ecodes.KEY_A: "a",
                 ecodes.KEY_D: "d", ecodes.KEY_Q: "q", ecodes.KEY_E: "e",
-                ecodes.KEY_R: "r", ecodes.KEY_P: "p", ecodes.KEY_H: "h",
+                ecodes.KEY_R: "r", ecodes.KEY_H: "h",
                 ecodes.KEY_N: "n",
             }
         self._devices = []
@@ -243,8 +242,8 @@ class KeyboardCommand:
         simultaneous keys on some keyboards (N-key-rollover / terminal
         auto-repeat limits), but works everywhere including over SSH.
 
-    Both backends update the same vx/vy/wz/reset_requested/pause_toggled
-    state, so main() does not need to know which one is active.
+    Both backends update the same motion and discrete command state, so main()
+    does not need to know which one is active.
     """
 
     def __init__(self, vx_limit, vy_limit, wz_limit, key_timeout_s=0.3):
@@ -254,12 +253,11 @@ class KeyboardCommand:
         self.reset_requested = False
         self.recover_requested = False
         self.next_waypoint_requested = False
-        self.pause_toggled = False
 
         self._lock = threading.Lock()
         self._pressed = set()      # evdev backend: exact currently-held chars
         self._last_seen = {}       # termios backend: char -> monotonic timestamp
-        self._discrete_last_seen = {}  # suppress terminal key auto-repeat for n/r/h/p
+        self._discrete_last_seen = {}  # suppress terminal key auto-repeat for n/r/h
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._read_loop, daemon=True)
 
@@ -326,8 +324,6 @@ class KeyboardCommand:
                         self.recover_requested = True
                     elif char == "n":
                         self.next_waypoint_requested = True
-                    elif char == "p":
-                        self.pause_toggled = True
 
     def _read_loop_termios(self):
         while not self._stop.is_set():
@@ -345,7 +341,7 @@ class KeyboardCommand:
             if k in ("w", "s", "a", "d", "q", "e"):
                 with self._lock:
                     self._last_seen[k] = now
-            elif k in ("r", "h", "n", "p"):
+            elif k in ("r", "h", "n"):
                 with self._lock:
                     previous = self._discrete_last_seen.get(k)
                     self._discrete_last_seen[k] = now
@@ -357,8 +353,6 @@ class KeyboardCommand:
                     self.recover_requested = True
                 elif k == "n":
                     self.next_waypoint_requested = True
-                else:
-                    self.pause_toggled = True
 
     def update(self):
         """Call once per policy step: recompute vx/vy/wz from currently-held keys."""
@@ -774,7 +768,7 @@ def main():
 
     print("Controls (type into the TERMINAL, not the 3D viewer window):")
     print("  hold w/s=vx  a/d=turn  q/e=vy(strafe)   h=recover(stand in place)")
-    print("  n=next waypoint   r=reset(to start)   p=pause   Ctrl+C=quit")
+    print("  n=next waypoint   r=reset(to start)   Ctrl+C=quit")
     print(f"xml={args.xml.resolve()}")
     if router_runtime is not None:
         print(f"router_bundle={router_runtime.bundle_path}")
@@ -784,7 +778,6 @@ def main():
           f"real_time={args.real_time}  record={args.record}")
 
     sample = 0
-    paused = False
     command_state.start()
     try:
         with mujoco.viewer.launch_passive(model, data) as viewer:
@@ -858,15 +851,6 @@ def main():
                         )
                     command_state.next_waypoint_requested = False
                     viewer.sync()
-                    continue
-
-                if command_state.pause_toggled:
-                    paused = not paused
-                    command_state.pause_toggled = False
-
-                if paused:
-                    viewer.sync()
-                    time.sleep(0.02)
                     continue
 
                 command = np.clip(command_state.as_array(), [-1, -.6, -1], [1, .6, 1]).astype(np.float32)
@@ -954,8 +938,6 @@ def main():
                                  low_height_half_width=args.low_height_corridor_half_width)
                     if router_runtime is not None:
                         debug["wheel_tread_z_w"] = [float(z) if np.isfinite(z) else None for z in wheel_treads]
-                        paused = router_runtime.router.paused_climb_mode
-                        debug["paused_climb_mode"] = paused.name if paused is not None else None
                         debug["straddle_steps"] = router_runtime.router.straddle_steps
                         debug["normal_straddle_steps"] = router_runtime.router.normal_straddle_steps
                         debug["last_entry_reason"] = router_runtime.router.last_entry_reason
@@ -993,7 +975,7 @@ def main():
 
                 if args.log_every and sample % args.log_every == 0:
                     if router_runtime is None:
-                        print_status(sample, state, command, float(hit.mean()), paused)
+                        print_status(sample, state, command, float(hit.mean()), False)
                     else:
                         print(
                             f"\r[running] step={sample:6d} vx={command[0]:+.2f} "

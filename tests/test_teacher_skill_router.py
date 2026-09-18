@@ -292,6 +292,167 @@ def test_continuous_low_stairs_advance_successor_during_split_support():
     assert not router.wheel_confirmed.any()
 
 
+def test_low_stairs_handoff_directly_to_detected_high_successor():
+    from dataclasses import replace
+
+    contract = {
+        "height_split_m": .16, "forward_min_x": .1,
+        "max_abs_y": .1, "max_abs_yaw": .1,
+        "detector_confirm_s": .04, "attempt_timeout_s": 12.,
+        "successor_search_s": .20, "recovery_hold_s": .20,
+        "recovery_timeout_s": 5., "recovery_base_height_m": .35,
+    }
+    router = S10TeacherSkillRouter(contract, .02)
+    first = _detect(
+        '<geom name="step" type="box" pos=".9 0 .05" size=".5 .6 .05" group="0"/>'
+    )
+    state = S10PolicyState(
+        np.asarray([0, 0, .4]), np.eye(3), np.zeros(3), np.zeros(3),
+        DEFAULT_ROBOT.copy(), np.zeros(16),
+    )
+    for _ in range(2):
+        router.select([.3, 0, 0], first, state, np.zeros(4), np.zeros(4, bool))
+
+    high_upper = first.upper_z_w + .23
+    successor = replace(
+        first,
+        edge_segment_w=first.edge_segment_w + np.asarray([.25, 0., .23]),
+        upper_z_w=high_upper,
+        height_m=.23,
+    )
+    # Detection alone must not transfer control, even after LOW completion.
+    low_treads = np.full(4, first.upper_z_w)
+    for _ in range(5):
+        assert router.select(
+            [.3, 0, 0], successor, state, low_treads + .11,
+            np.ones(4, bool), low_treads,
+        ) == PolicyMode.LOW_STEP_SEQUENCE
+    missing = replace(successor, has_target=False)
+    high_treads = np.array([high_upper, high_upper, 0., 0.])
+    # Historical, alternating contacts must not count as joint support.
+    for contacts in ([True, False, False, False], [False, True, False, False]):
+        for _ in range(4):
+            assert router.select(
+                [.3, 0, 0], missing, state, high_treads + .11,
+                contacts, high_treads,
+            ) == PolicyMode.LOW_STEP_SEQUENCE
+    # A ray below a lifted wheel is insufficient, even with a side contact.
+    for _ in range(4):
+        assert router.select(
+            [.3, 0, 0], missing, state, high_treads + .3,
+            np.ones(4, bool), high_treads,
+        ) == PolicyMode.LOW_STEP_SEQUENCE
+    # Detector loss is harmless; rear contacts/height do not gate handoff.
+    for i in range(3):
+        mode = router.select(
+            [.3, 0, 0], missing, state, high_treads + .11,
+            [True, True, False, False], high_treads,
+        )
+        assert mode == (PolicyMode.HIGH_CLIMB if i == 2
+                        else PolicyMode.LOW_STEP_SEQUENCE)
+    assert router.locked_upper_z_w == pytest.approx(high_upper)
+    assert router.last_transition_reason == "confirmed_high_front_support"
+    assert router.mode_steps == 0
+
+
+def test_low_does_not_handoff_to_high_from_one_frame_detection_spike():
+    from dataclasses import replace
+
+    contract = {
+        "height_split_m": .16, "forward_min_x": .1,
+        "max_abs_y": .1, "max_abs_yaw": .1,
+        "detector_confirm_s": .04, "attempt_timeout_s": 12.,
+        "successor_search_s": .20, "recovery_hold_s": .20,
+        "recovery_timeout_s": 5., "recovery_base_height_m": .35,
+    }
+    router = S10TeacherSkillRouter(contract, .02)
+    first = _detect(
+        '<geom name="step" type="box" pos=".9 0 .05" size=".5 .6 .05" group="0"/>'
+    )
+    state = S10PolicyState(
+        np.asarray([0, 0, .4]), np.eye(3), np.zeros(3), np.zeros(3),
+        DEFAULT_ROBOT.copy(), np.zeros(16),
+    )
+    for _ in range(2):
+        router.select([.3, 0, 0], first, state, np.zeros(4), np.zeros(4, bool))
+    high = replace(
+        first,
+        edge_segment_w=first.edge_segment_w + np.asarray([.25, 0., .23]),
+        upper_z_w=first.upper_z_w + .23,
+        height_m=.23,
+    )
+    missing = replace(high, has_target=False)
+    assert router.select(
+        [.3, 0, 0], high, state, np.zeros(4), np.zeros(4, bool)
+    ) == PolicyMode.LOW_STEP_SEQUENCE
+    assert router.select(
+        [.3, 0, 0], missing, state, np.zeros(4), np.zeros(4, bool)
+    ) == PolicyMode.LOW_STEP_SEQUENCE
+    assert router.pending_successor is None
+
+
+def test_runtime_prewarms_pending_high_successor_without_using_its_action():
+    from types import SimpleNamespace
+
+    class FakeRouter:
+        mode = PolicyMode.LOW_STEP_SEQUENCE
+        normal_handoff_settling = False
+        pending = True
+
+        def select(self, *_args):
+            return self.mode
+
+        def high_successor_pending(self):
+            return self.pending
+
+    class FakeActor:
+        def __init__(self, value):
+            self.value = value
+            self.calls = []
+            self.reset_count = 0
+
+        def reset(self):
+            self.reset_count += 1
+
+        def __call__(self, command, _proprio, height):
+            self.calls.append((np.asarray(command).copy(), np.asarray(height).copy()))
+            return np.full(16, self.value, np.float32)
+
+    runtime = object.__new__(TeacherSkillRuntime)
+    runtime.router = FakeRouter()
+    runtime.low_command_adapter = None
+    runtime.low_forward_command_max_mps = .6
+    runtime.high_forward_command_max_mps = .6
+    runtime.low_height_corridor_half_width_m = 0.
+    runtime.low_height_x_range = None
+    runtime.actors = {
+        mode.name: FakeActor(index) for index, mode in enumerate(PolicyMode)
+    }
+    low_height = np.full((1, 41, 33), 1., np.float32)
+    high_height = np.full((1, 41, 33), 2., np.float32)
+    args = (
+        np.asarray([1., 0., 0.]), np.zeros(57), np.zeros((1, 41, 33)),
+        SimpleNamespace(), SimpleNamespace(base_rotation_w=np.eye(3)),
+        np.zeros(4), np.zeros(4, bool),
+    )
+    action = runtime.step(
+        *args, low_height_map=low_height, high_height_map=high_height
+    )
+    np.testing.assert_allclose(action, 2.)
+    assert len(runtime.actors["LOW_STEP_SEQUENCE"].calls) == 1
+    assert len(runtime.actors["HIGH_CLIMB"].calls) == 1
+    np.testing.assert_allclose(runtime.actors["HIGH_CLIMB"].calls[0][0], [.6, 0., 0.])
+    np.testing.assert_array_equal(runtime.actors["HIGH_CLIMB"].calls[0][1], high_height)
+    assert runtime.actors["HIGH_CLIMB"].reset_count == 0
+
+    # The warmed hidden state remains owned by HIGH on the transfer frame.
+    runtime.router.mode = PolicyMode.HIGH_CLIMB
+    runtime.router.pending = False
+    runtime.step(*args, low_height_map=low_height, high_height_map=high_height)
+    assert len(runtime.actors["HIGH_CLIMB"].calls) == 2
+    assert runtime.actors["HIGH_CLIMB"].reset_count == 0
+
+
 @pytest.mark.parametrize("vx", [1.0, 0.6, 0.4, 0.2, 0.0, -0.3])
 def test_high_command_cap_preserves_router_normal_shadow_and_user_command(vx):
     from types import SimpleNamespace
@@ -488,7 +649,6 @@ def test_normal_reenters_straddled_tread_without_forward_target(
             [0, 0, 0], invisible, state, [.21, .21, .11, .11], [True]*4,
             resume_treads,
         ) == PolicyMode.NORMAL
-    assert router.paused_climb_mode is None
     for _ in range(3):
         mode = router.select(
             command, invisible, state, [.21, .21, .11, .11], [True]*4,
@@ -499,7 +659,6 @@ def test_normal_reenters_straddled_tread_without_forward_target(
         assert router.locked_edge_center_w is not None
         assert router.mode_steps == 0
     router.reset()
-    assert router.paused_climb_mode is None
 
 
 @pytest.mark.parametrize("treads,command,contacts,expected", [
@@ -526,7 +685,6 @@ def test_normal_enters_climb_from_treads_without_history_or_forward_target(tread
     router = S10TeacherSkillRouter(contract, .02)
     detection = replace(_detect(''), has_target=False)
     state = SimpleNamespace(base_rotation_w=np.eye(3), base_pos_w=np.array([0, 0, .4]))
-    assert router.paused_climb_mode is None
     for _ in range(2):
         assert router.select(command, detection, state, np.asarray(treads)+.11, contacts, treads) == PolicyMode.NORMAL
     mode = router.select(command, detection, state, np.asarray(treads)+.11, contacts, treads)
@@ -613,3 +771,49 @@ def test_runtime_shadows_normal_only_during_recovery_and_resets_other_dormant_gr
     np.testing.assert_allclose(
         runtime.actors["LOW_STEP_SEQUENCE"].calls[-1], [.6, .05, -.1]
     )
+
+
+@pytest.mark.parametrize('command', [[0, 0, 0], [-1, 0, 0], [0, .6, 0], [0, 0, -1]])
+def test_high_operator_handoff_delivers_command_to_normal_immediately(command):
+    from types import SimpleNamespace
+    contract = dict(height_split_m=.16, forward_min_x=.1, max_abs_y=.1,
+                    max_abs_yaw=.1, detector_confirm_s=.04, attempt_timeout_s=12.,
+                    successor_search_s=.2, recovery_hold_s=.2,
+                    recovery_timeout_s=5., recovery_base_height_m=.35)
+    router = S10TeacherSkillRouter(contract, .02)
+    router.mode = PolicyMode.HIGH_CLIMB
+    router.locked_edge_center_w = np.zeros(3)
+    router.locked_direction_w = np.array([1., 0.])
+    class Actor:
+        def __init__(self):
+            self.commands = []
+        def reset(self):
+            pass
+        def __call__(self, command, *_):
+            self.commands.append(np.asarray(command).copy())
+            return np.zeros(16)
+    runtime = object.__new__(TeacherSkillRuntime)
+    runtime.router = router
+    runtime.actors = {mode.name: Actor() for mode in PolicyMode}
+    runtime.low_height_corridor_half_width_m = 0.
+    runtime.step(command, np.zeros(57), np.zeros((1, 41, 33)), None,
+                 SimpleNamespace(), np.zeros(4), np.zeros(4, bool))
+    assert router.mode == PolicyMode.NORMAL
+    assert router.last_transition_reason == 'high_command_handoff'
+    assert not router.just_entered_recovery
+    np.testing.assert_array_equal(runtime.actors['NORMAL'].commands[0], np.asarray(command, np.float32))
+    assert not runtime.actors['RECOVERY'].commands
+
+
+def test_high_attempt_timeout_still_enters_recovery():
+    from types import SimpleNamespace
+    contract = dict(height_split_m=.16, forward_min_x=.1, max_abs_y=.1,
+                    max_abs_yaw=.1, detector_confirm_s=.04, attempt_timeout_s=12.,
+                    successor_search_s=.2, recovery_hold_s=.2,
+                    recovery_timeout_s=5., recovery_base_height_m=.35)
+    router = S10TeacherSkillRouter(contract, .02)
+    router.mode = PolicyMode.HIGH_CLIMB
+    router.mode_steps = router.attempt_steps - 1
+    assert router.select([.4, 0, 0], SimpleNamespace(has_target=False),
+                         SimpleNamespace(), np.zeros(4), np.zeros(4, bool)) == PolicyMode.RECOVERY
+    assert router.last_transition_reason == 'attempt_timeout'

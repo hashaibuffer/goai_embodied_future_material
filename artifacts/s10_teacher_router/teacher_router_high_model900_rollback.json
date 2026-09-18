@@ -37,7 +37,7 @@
     "low_command_yaw_gain": 0.5,
     "low_command_yaw_limit": 0.5,
     "low_forward_command_max_mps": 0.6,
-    "high_forward_command_max_mps": 0.4,
+    "high_forward_command_max_mps": 0.6,
     "max_abs_y": 0.1,
     "max_abs_yaw": 0.1,
     "recovery_base_height_m": 0.35,

@@ -1,16 +1,18 @@
 # S10四教师Router的MuJoCo整赛道测试
 
-2026-09-18：主入口`teacher_router_bundle.json`已改为当前正式接线，不再绑定旧LOW
-model800；它与`teacher_router_low_command_events_model99.json`内容一致，LOW实际绑定
-`low_command_events_milestone_model99.onnx`。同时修正两处Router交接：四轮已确认且处于同一
-支撑面时，顶端松键/命令结束直接回NORMAL；连续台阶前轮已到下一踏面、后轮刚完成当前踏面时，
-允许推进LOW successor，不再被`split_support`阻塞。终端与JSONL中的
-`last_transition_reason`可区分正常完成、successor推进、零命令和超时。
+正式入口为 `artifacts/s10_teacher_router/teacher_router_bundle.json`；
+这是唯一正式入口。历史回退配置为同目录 `teacher_router_high_model900_rollback.json`，仅HIGH改回model900，使用当前Router逻辑；通过 `--router-bundle artifacts/s10_teacher_router/teacher_router_high_model900_rollback.json` 显式选择。
+最终组合：NORMAL275 / LOW99 / HIGH容错49 / RECOVERY900。
+用户于2026-09-18反馈当前场景均可通过，并指定容错49为最终HIGH；这是人工GUI反馈，不是统计成功率。
+原HIGH900保留为父模型和回退版本。
 
-当前保留原HIGH model900。HIGH Actor只把正向`vx`裁剪到bundle中的
-`high_forward_command_max_mps=0.6`；小指令不放大，零命令、倒车以及`vy/wz`不变。
-Router、Detector及NORMAL预热仍使用操作者原始命令。这个裁剪是Actor输入适配，不代表实际
-运动速度恒为0.6 m/s，也不构成GoAI GUI通过结论。容错model49仍是待验收候选，未替换model900。
+HIGH49来源：`/home/hashai/Projects/DeepRobotics/rl_training/logs/rsl_rl/deeprobotics_s10_asymmetric_teacher/T4a-High-Platform-Tolerance/2026-09-16_18-14-19_high_platform_tolerance_parent_anchor_from_model900_20260916/model_49.pt`。
+checkpoint SHA256：`83eea181ce9043a6999012571614a3c8222f7a5c59e2cb33fac4db20d0f25975`。
+导出：`artifacts/s10_teacher_router/high_climb_model49.onnx`，SHA256：`27cf1941da1b9ee3af8bab478f1ec3dc5693f6e960545baf177bd599ee2cce44`。
+来源、协议和既有导出一致性检查见同目录 `high_climb_model49.onnx.json`。
+
+HIGH Actor使用 `vx_actor=min(vx_user,0.6)`；Router和NORMAL仍读取原始命令。
+该数值是输入上限，不保证实际运动速度。1413→16 CNN+GRU协议不变。
 
 这条链路只用于在GoAI仓库的真实MuJoCo比赛场景中验证冻结教师，不加载Isaac赛道复刻。
 地图不写进bundle，也没有默认地图；每次启动必须显式传`--xml`。
@@ -18,7 +20,7 @@ Router、Detector及NORMAL预热仍使用操作者原始命令。这个裁剪是
 ## 运行合同
 
 - NORMAL：`model_275`
-- HIGH_CLIMB：T4a `model_900`
+- HIGH_CLIMB：T4a容错 `model_49`
 - LOW_STEP_SEQUENCE：Low command-events `model_99`
 - RECOVERY：Recovery候选 `model_900`
 - Router安全分界：`<0.16 m`为Low，`>=0.16 m`为High
@@ -28,12 +30,13 @@ Router、Detector及NORMAL预热仍使用操作者原始命令。这个裁剪是
 - LOW和HIGH都使用连通支撑面高度图。LOW按`0.18 m`最大相邻层差选择连续踏面；HIGH及
   Detector按其`0.45 m`检测上限选择连续踏面，避免把0.23 m高台退化成悬空结构的原始首击面。
 - 每个Actor独立保持128维GRU状态。当前Actor运行；NORMAL在成功交接等待和RECOVERY期间预热，
-  其他休眠Actor清零，避免继承无关技能历史。
+  HIGH在LOW待交接期间预热，其余休眠Actor清零。
 - 当前棱的四轮支撑分别连续确认3拍。检测到下一低台阶后，即使前后轴正分处相邻踏面，也会
-  推进LOW锁存目标；只有没有successor且四轮处于同一支撑面时才完成到NORMAL。
+  推进LOW锁存目标；下一棱属于HIGH并连续通过Detector确认后锁存目标；两个前轮同时在该HIGH顶面接触并连续确认3拍后交给HIGH。后轮不参与交接门，Detector随后丢失不清除已确认目标；等待期间预热HIGH的GRU。只有没有successor且四轮处于同一
+  支撑面时才完成到NORMAL。
 - LOW是纯前进过阶专家。LOW期间出现横移、转向、零命令或倒车时立即交给NORMAL，不进入
   RECOVERY，也不继续锁存新的LOW successor。
-- LOW仅在12秒尝试超时时进入RECOVERY；HIGH仍保留零命令、不兼容命令和超时恢复路径。
+- LOW和HIGH仅在12秒尝试超时时进入RECOVERY；HIGH的零命令、倒车、横移或转向命令直接交回NORMAL。
   RECOVERY连续稳定0.2秒后回NORMAL，最长占用5秒。成功登顶和LOW命令交接不经过RECOVERY。
 
 GoAI的非对称观测严格按训练顺序组装：
